@@ -796,7 +796,12 @@ function App() {
   </>;
 }
 
-function Brand({ compact = false }) { return <div className={compact ? 'brand compact' : 'brand'}><div className="brand-mark"><ShieldCheck size={compact ? 22 : 29} /></div><div><b>CEA OpsGrid</b><span>Operations platform</span></div></div>; }
+function Brand({ compact = false, subtitle = 'Operations platform' }) {
+  return <div className={compact ? 'brand compact' : 'brand'}>
+    <div className="brand-mark"><ShieldCheck size={compact ? 22 : 29} /></div>
+    <div><b>CEA OpsGrid</b><span>{subtitle}</span></div>
+  </div>;
+}
 function Avatar({ name, src, small = false, large = false }) { return src ? <img className={`avatar avatar-photo${small ? ' small' : ''}${large ? ' large' : ''}`} src={src} alt={`${name} profile`} /> : <div className={`avatar${small ? ' small' : ''}${large ? ' large' : ''}`}>{initials(name)}</div>; }
 function Notice({ children, onClose }) { return <div className="notice">{children}{onClose && <button onClick={onClose} className="icon-button"><X size={15} /></button>}</div>; }
 function ConfigErrorScreen() {
