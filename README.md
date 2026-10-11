@@ -15,12 +15,10 @@ CEA OpsGrid is a React and Supabase operations system for CEA CCTV Installation 
    select id,
      case email
        when 'christopherandal@ceacompany.com' then 'Christopher Andal'
-       when 'inventorystaff@ceacompany.com' then 'Inventory Staff'
        when 'technicianstaff@ceacompany.com' then 'Field Technician'
      end,
      case email
        when 'christopherandal@ceacompany.com' then 'administrator'
-       when 'inventorystaff@ceacompany.com' then 'inventory_staff'
        when 'technicianstaff@ceacompany.com' then 'field_technician'
      end
    from auth.users
