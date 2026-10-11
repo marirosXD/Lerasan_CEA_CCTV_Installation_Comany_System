@@ -1024,10 +1024,12 @@ function QuotationsView({ quotations, search, setSearch, onAdd, onView, onPrint 
         </div>
         <div className="quote-card-body">
           <h4>{quote.client_name}</h4>
-          <p>{quote.project_title || quote.service_type}</p>
+          <p className="quote-project">{quote.project_title || quote.service_type}</p>
           <small className="quote-location">{quote.client_address || 'No location set'}</small>
-          <strong>{money(quote.subtotal)}</strong>
-          <small>50% down payment · {money(quote.down_payment)}</small>
+          <div className="quote-totals">
+            <strong>{money(quote.subtotal)}</strong>
+            <small>50% down payment · {money(quote.down_payment)}</small>
+          </div>
         </div>
         <div className="quote-actions">
           <button className="button secondary small-button" onClick={() => onView(quote)}><Eye size={15} /> View</button>
