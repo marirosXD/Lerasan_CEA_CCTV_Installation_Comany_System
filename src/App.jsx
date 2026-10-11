@@ -833,8 +833,7 @@ function LoginScreen({ onSubmit, busy, message, role, email, onEmailChange, onRo
   }
 
   return <main className="login-shell"><section className="login-card">
-    <Brand />
-    <div className="login-heading"><h1>CEA OpsGrid ERP</h1><p>CEA CCTV Installation Services • Tugbok, Davao City</p></div>
+    <Brand subtitle="CEA CCTV Installation Services • Tugbok, Davao City" />
     {message && <Notice>{message}</Notice>}
     <div className="role-quick">
       <label>Select access role</label>
