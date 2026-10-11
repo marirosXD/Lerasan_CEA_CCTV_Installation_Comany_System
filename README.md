@@ -24,7 +24,6 @@ CEA OpsGrid is a React and Supabase operations system for CEA CCTV Installation 
    from auth.users
    where email in (
      'christopherandal@ceacompany.com',
-     'inventorystaff@ceacompany.com',
      'technicianstaff@ceacompany.com'
    )
    on conflict (id) do update
@@ -56,7 +55,6 @@ npm run dev
 ## Role access
 
 - **Administrator:** work orders and dispatch, inventory, quotations, employee directory, and account settings.
-- **Inventory Staff:** inventory list and stock receiving, plus personal account settings.
 - **Field Technician:** only assigned work orders, their addresses, schedules, and required hardware, plus personal account settings.
 
 Database policies in the migration enforce the same boundaries even if someone bypasses the interface.
