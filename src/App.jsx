@@ -267,13 +267,39 @@ function App() {
     if (error) setMessage(error.message); else { setModal(null); setCustomSupplier(false); await loadWorkspace(); }
   }
   async function archiveInventory(item) {
-    if (!window.confirm(`Archive "${item.item_name}"? It will be hidden from the list but history is kept.`)) return;
+    if (!window.confirm(`Archive "${item.item_name}"?\n\nIt will be moved to the Archived tab. History is kept, and you can restore it any time.`)) return;
     const { error } = await supabase.rpc('archive_inventory', { item_id: item.id });
-    if (error) setMessage(error.message); else { setMessage(`"${item.item_name}" archived.`); setModal(null); await loadWorkspace(); }
+    if (error) setMessage(error.message);
+    else {
+      setMessage(`"${item.item_name}" archived. View it in the Archived tab.`);
+      setModal(null);
+      setInventoryFilter('archived');
+      await loadWorkspace();
+    }
   }
   async function restoreInventory(item) {
+    if (!window.confirm(`Restore "${item.item_name}" back to active inventory?`)) return;
     const { error } = await supabase.rpc('restore_inventory', { item_id: item.id });
-    if (error) setMessage(error.message); else { setMessage(`"${item.item_name}" restored.`); setModal(null); await loadWorkspace(); }
+    if (error) setMessage(error.message);
+    else {
+      setMessage(`"${item.item_name}" restored.`);
+      await loadWorkspace();
+      setInventoryFilter('all');
+    }
+  }
+  async function restoreAllArchived(items) {
+    if (!items.length) return;
+    if (!window.confirm(`Restore all ${items.length} archived item${items.length === 1 ? '' : 's'}?`)) return;
+    setBusy(true);
+    let restored = 0;
+    for (const item of items) {
+      const { error } = await supabase.rpc('restore_inventory', { item_id: item.id });
+      if (!error) restored += 1;
+    }
+    setBusy(false);
+    setMessage(`${restored} item${restored === 1 ? '' : 's'} restored.`);
+    setInventoryFilter('all');
+    await loadWorkspace();
   }
   async function forceDeleteInventory(item) {
     if (!window.confirm(`Permanently delete "${item.item_name}" AND all its stock history? This cannot be undone.`)) return;
@@ -556,8 +582,8 @@ function App() {
     onRoleChange={(nextRole) => { setLoginRole(nextRole); setLoginEmail(roleEmails[nextRole]); }}
     onForgotPassword={sendSignInLink}
   />;
-  if (!role && profileLoading) return <main className="login-shell"><section className="login-card"><Brand /><p>Loading your account…</p></section><div className="login-background" /></main>;
-  if (!role) return <main className="login-shell"><section className="login-card"><Brand /><h2>Account role not assigned</h2><p>Your sign-in is active, but this user has no matching row in <b>public.profiles</b>. Add a profile row with this account’s Auth user ID and role, then sign in again.</p>{message && <Notice>{message}</Notice>}<button className="button secondary full" onClick={signOut}><LogOut size={16} /> Sign out</button></section><div className="login-background" /></main>;
+  if (!role && profileLoading) return <main className="login-shell"><section className="login-card"><Brand subtitle="CEA CCTV Installation Services • Tugbok, Davao City" /><p>Loading your account…</p></section><div className="login-background" /></main>;
+  if (!role) return <main className="login-shell"><section className="login-card"><Brand subtitle="CEA CCTV Installation Services • Tugbok, Davao City" /><h2>Account role not assigned</h2><p>Your sign-in is active, but this user has no matching row in <b>public.profiles</b>. Add a profile row with this account’s Auth user ID and role, then sign in again.</p>{message && <Notice>{message}</Notice>}<button className="button secondary full" onClick={signOut}><LogOut size={16} /> Sign out</button></section><div className="login-background" /></main>;
 
   const tabs = tabsByRole[role] || tabsByRole.field_technician;
   const title = tabs.find(([key]) => key === tab)?.[1] || 'Overview';
@@ -589,6 +615,8 @@ function App() {
           onAdjust={(item) => setModal({ type: 'adjust-stock', item })}
           onHistory={(item) => setModal({ type: 'stock-history', item })}
           onRestore={restoreInventory}
+          onRestoreAll={restoreAllArchived}
+          onForceDelete={forceDeleteInventory}
           onViewHistoryPage={() => setInventoryFilter('history')}
         />}
         {tab === 'schedule' && <TeamScheduleView schedule={teamSchedule} myOrderIds={visibleOrders.map((order) => order.id)} />}
@@ -610,7 +638,7 @@ function App() {
           onChangePassword={changeOwnPassword}
         />}
       </main>
-      {modal && <Modal title={modal.type === 'inventory' ? 'Add inventory item' : modal.type === 'edit-inventory' ? 'Edit inventory item' : modal.type === 'inventory-details' ? 'Inventory item details' : modal.type === 'receive' ? 'Receive stock' : modal.type === 'adjust-stock' ? 'Adjust stock' : modal.type === 'stock-history' ? 'Stock history' : modal.type === 'workorder' ? 'Create work order' : modal.type === 'edit-workorder' ? 'Edit work order' : modal.type === 'employee' ? 'Add employee' : modal.type === 'edit-employee' ? 'Employee settings' : modal.type === 'employee-details' ? 'Employee details' : modal.type === 'quotation' ? 'Create quotation' : 'Quotation details'} onClose={() => { resetHardwareRows(); resetQuoteRows(); setCustomSupplier(false); setModal(null); }}>
+      {modal && <Modal title={modal.type === 'inventory' ? 'Add inventory item' : modal.type === 'edit-inventory' ? 'Edit inventory item' : modal.type === 'inventory-details' ? 'Inventory item details' : modal.type === 'archived-details' ? 'Archived item' : modal.type === 'receive' ? 'Receive stock' : modal.type === 'adjust-stock' ? 'Adjust stock' : modal.type === 'stock-history' ? 'Stock history' : modal.type === 'workorder' ? 'Create work order' : modal.type === 'edit-workorder' ? 'Edit work order' : modal.type === 'employee' ? 'Add employee' : modal.type === 'edit-employee' ? 'Employee settings' : modal.type === 'employee-details' ? 'Employee details' : modal.type === 'quotation' ? 'Create quotation' : 'Quotation details'} onClose={() => { resetHardwareRows(); resetQuoteRows(); setCustomSupplier(false); setModal(null); }}>
 
         {modal.type === 'inventory' && <form className="form-grid" onSubmit={addInventory}>
           <Field name="item_name" label="What is it?" required placeholder="8MP Bullet Camera" />
@@ -668,6 +696,24 @@ function App() {
             <button className="button secondary" onClick={() => setModal({ type: 'stock-history', item: modal.item })}><ClipboardList size={16} /> History</button>
             <button className="button primary" onClick={() => { setCustomSupplier(false); setModal({ type: 'edit-inventory', item: modal.item }); }}>Edit item</button>
           </div>}
+        </div>}
+
+        {modal.type === 'archived-details' && <div className="record-details">
+          <div className="archived-detail-badge">
+            <Archive size={16} />
+            <span>Archived item</span>
+          </div>
+          <Detail label="Item" value={modal.item.item_name} icon={Package} />
+          <Detail label="Type" value={modal.item.category} icon={Package} />
+          <Detail label="Quantity when archived" value={formatQty(modal.item.stock_qty, modal.item.unit)} icon={ArrowDownToLine} />
+          <Detail label="Price per unit" value={money(modal.item.unit_cost)} icon={FileText} />
+          <Detail label="Supplier" value={modal.item.supplier || 'Not recorded'} icon={BriefcaseBusiness} />
+          {modal.item.archived_at && <Detail label="Archived on" value={formatDateTime(modal.item.archived_at)} icon={CalendarDays} />}
+          <div className="form-actions inventory-detail-actions">
+            <button className="button danger subtle" onClick={() => forceDeleteInventory(modal.item)} title="Permanently delete item and all its history"><Trash2 size={16} /> Force delete</button>
+            <button className="button secondary" onClick={() => { setModal(null); setModal({ type: 'stock-history', item: modal.item }); }}><ClipboardList size={16} /> View history</button>
+            <button className="button primary" onClick={() => { restoreInventory(modal.item); setModal(null); }}><RotateCcw size={16} /> Restore to active</button>
+          </div>
         </div>}
 
         {modal.type === 'receive' && <form className="form-grid" onSubmit={receiveStock}>{modal.item ? <div className="field full"><span>Receiving</span><div className="receive-item-card"><b>{modal.item.item_name}</b><small>Current stock: {formatQty(modal.item.stock_qty, modal.item.unit)}</small></div><input type="hidden" name="item_id" value={modal.item.id} /></div> : <label className="field full"><span>Inventory item</span><select name="item_id" required>{activeInventory.map((item) => <option key={item.id} value={item.id}>{item.item_name} · {formatQty(item.stock_qty, item.unit)} available</option>)}</select></label>}<Field name="quantity" label="How many received?" type="number" min="1" required autoFocus /><Field name="notes" label="Receipt note (optional)" placeholder="Supplier or reference no." /><FormActions onCancel={() => setModal(null)} /></form>}
@@ -805,7 +851,7 @@ function Brand({ compact = false, subtitle = 'Operations platform' }) {
 function Avatar({ name, src, small = false, large = false }) { return src ? <img className={`avatar avatar-photo${small ? ' small' : ''}${large ? ' large' : ''}`} src={src} alt={`${name} profile`} /> : <div className={`avatar${small ? ' small' : ''}${large ? ' large' : ''}`}>{initials(name)}</div>; }
 function Notice({ children, onClose }) { return <div className="notice">{children}{onClose && <button onClick={onClose} className="icon-button"><X size={15} /></button>}</div>; }
 function ConfigErrorScreen() {
-  return <main className="login-shell"><section className="login-card"><Brand /><div className="login-heading"><h1>Supabase configuration required</h1><p>Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your deployment environment before opening the app.</p></div><Notice>Missing Supabase environment variables. The app will not connect with hardcoded fallback keys.</Notice></section><div className="login-background" /></main>;
+  return <main className="login-shell"><section className="login-card"><Brand subtitle="CEA CCTV Installation Services • Tugbok, Davao City" /><div className="login-heading"><h1>Supabase configuration required</h1><p>Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your deployment environment before opening the app.</p></div><Notice>Missing Supabase environment variables. The app will not connect with hardcoded fallback keys.</Notice></section><div className="login-background" /></main>;
 }
 
 function LoginScreen({ onSubmit, busy, message, role, email, onEmailChange, onRoleChange, onForgotPassword }) {
@@ -815,7 +861,7 @@ function LoginScreen({ onSubmit, busy, message, role, email, onEmailChange, onRo
 
   if (forgotMode) {
     return <main className="login-shell"><section className="login-card">
-      <Brand />
+      <Brand subtitle="CEA CCTV Installation Services • Tugbok, Davao City" />
       <div className="login-heading">
         <h1>Forgot password?</h1>
         <p>Enter your email and we'll send a reset link.</p>
@@ -861,7 +907,7 @@ function Dashboard({ role, profile, orders, inventory, employees, setTab }) {
 function Stat({ label, value, icon: Icon, tone = 'blue' }) { return <div className="stat-card"><div className={`stat-icon ${tone}`}><Icon size={19} /></div><div><span>{label}</span><strong>{value}</strong></div></div>; }
 function QuickLink({ icon: Icon, title, subtitle, onClick }) { return <button className="quick-link" onClick={onClick}><span className="quick-icon"><Icon size={18} /></span><span><b>{title}</b><small>{subtitle}</small></span><ArrowRight size={16} /></button>; }
 
-function InventoryView({ inventory, archived, allInventory, transactions, search, setSearch, filter, setFilter, onAdd, onReceiveAll, onReceive, onOpen, onAdjust, onHistory, onRestore, onViewHistoryPage }) {
+function InventoryView({ inventory, archived, allInventory, transactions, search, setSearch, filter, setFilter, onAdd, onReceiveAll, onReceive, onOpen, onAdjust, onHistory, onRestore, onRestoreAll, onForceDelete, onViewHistoryPage }) {
   const lowCount = allInventory.filter((item) => Number(item.stock_qty) <= Number(item.reorder_level ?? 1)).length;
   const showHistoryPage = filter === 'history';
 
@@ -881,17 +927,20 @@ function InventoryView({ inventory, archived, allInventory, transactions, search
       <button className={filter === 'history' ? 'chip active' : 'chip'} onClick={onViewHistoryPage}>
         <ClipboardList size={13} /> History
       </button>
-      {archived.length > 0 && (
-        <button className={filter === 'archived' ? 'chip active' : 'chip'} onClick={() => setFilter('archived')}>
-          <Archive size={13} /> Archived ({archived.length})
-        </button>
-      )}
+      <button className={filter === 'archived' ? 'chip active archived-chip' : 'chip archived-chip'} onClick={() => setFilter('archived')}>
+        <Archive size={13} /> Archived {archived.length > 0 && <span className="chip-count archived-count">{archived.length}</span>}
+      </button>
     </div>
 
     {showHistoryPage ? (
       <AllHistoryView inventory={allInventory} transactions={transactions} />
     ) : filter === 'archived' ? (
-      <ArchivedListView archived={archived} onRestore={onRestore} onOpen={onOpen} />
+      <ArchivedListView
+        archived={archived}
+        onRestore={onRestore}
+        onRestoreAll={() => onRestoreAll(archived)}
+        onOpen={(item) => onOpen(item)}
+      />
     ) : (
       <>
         <ListSearch value={search} onChange={setSearch} placeholder="Search item, type, or supplier…" />
@@ -923,21 +972,56 @@ function InventoryView({ inventory, archived, allInventory, transactions, search
   </section>;
 }
 
-function ArchivedListView({ archived, onRestore, onOpen }) {
+function ArchivedListView({ archived, onRestore, onRestoreAll, onOpen }) {
+  if (!archived.length) {
+    return <>
+      <div className="archived-banner">
+        <Archive size={15} />
+        <span>Archived items are hidden from the main inventory but their stock history is preserved. Restore any item to bring it back.</span>
+      </div>
+      <div className="empty-state archived-empty">
+        <Archive size={40} strokeWidth={1.5} />
+        <p><b>No archived items yet.</b></p>
+        <small>Items you archive from the inventory list will appear here.</small>
+      </div>
+    </>;
+  }
+
   return <>
     <div className="archived-banner">
-      <Archive size={15} /> Archived items are hidden from the main list but their history is kept.
+      <Archive size={15} />
+      <span>{archived.length} archived item{archived.length === 1 ? '' : 's'}. History is kept — restore any item to bring it back to the active list.</span>
+      <button className="button secondary small-button archived-restore-all" onClick={onRestoreAll}><RotateCcw size={14} /> Restore all</button>
     </div>
     <div className="table-scroll"><table>
-      <thead><tr><th>Item</th><th>Type</th><th>On hand</th><th>Action</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Type</th>
+          <th>On hand when archived</th>
+          <th>Archived</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
       <tbody>
-        {archived.map((item) => <tr key={item.id}>
-          <td><button className="table-link" onClick={() => onOpen?.(item)}><b>{item.item_name}</b><small>{item.supplier || item.unit || ''}</small></button></td>
+        {archived.map((item) => <tr key={item.id} className="clickable-row" onClick={() => onOpen?.(item)}>
+          <td>
+            <button className="table-link" onClick={(event) => { event.stopPropagation(); onOpen?.(item); }}>
+              <b>{item.item_name}</b>
+              <small>{item.supplier || item.unit || ''}</small>
+            </button>
+          </td>
           <td>{item.category}</td>
           <td><span className="qty-value">{formatQty(item.stock_qty, item.unit)}</span></td>
-          <td><button className="button secondary small-button" onClick={() => onRestore(item)}><RotateCcw size={14} /> Restore</button></td>
+          <td><small className="archived-date">{item.archived_at ? formatDateTime(item.archived_at) : 'Unknown'}</small></td>
+          <td>
+            <div className="row-actions">
+              <button className="button primary small-button" title="Restore to active inventory" onClick={(event) => { event.stopPropagation(); onRestore(item); }}>
+                <RotateCcw size={14} /> Restore
+              </button>
+            </div>
+          </td>
         </tr>)}
-        {!archived.length && <EmptyRow columns={4} text="No archived items." />}
       </tbody>
     </table></div>
   </>;
