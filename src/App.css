@@ -333,10 +333,29 @@ td small{display:block;color:#6b7280;font-size:11px;margin-top:4px}
 .all-history-header{display:flex;flex-direction:column;gap:4px;padding:14px 0 12px;border-bottom:1px solid #eff1f4;margin-bottom:0}
 .all-history-header b{font-size:15px;color:#0f172a}
 .all-history-header small{font-size:12.5px;color:#6b7280}
-.archived-banner{display:flex;align-items:center;gap:8px;padding:12px 20px;background:#fff7e6;border-top:1px solid #f1dda9;border-bottom:1px solid #f1dda9;color:#78591b;font-size:13px}
-.inventory-detail-actions{flex-wrap:wrap;gap:8px}
-.button.danger.subtle{background:#fff;border-color:#f1d2d2;color:#b34545;font-weight:600}
-.button.danger.subtle:hover{background:#fdeaea}
+
+/* ============================================================ */
+/* INVENTORY DETAIL ACTIONS — grouped layout                    */
+/* ============================================================ */
+.inventory-detail-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  justify-content:flex-start;
+}
+.inventory-detail-actions.primary-actions{
+  border-top:1px solid #edf0f4;
+  padding-top:14px;
+  margin-top:6px;
+}
+.inventory-detail-actions.destructive-actions{
+  border-top:1px solid #edf0f4;
+  padding-top:14px;
+  margin-top:0;
+  padding-bottom:0;
+}
+.inventory-detail-actions .button{padding:0 12px;font-size:13px;min-height:38px}
+.inventory-detail-actions .button svg{width:15px;height:15px}
 
 /* ============================================================ */
 /* RECEIVE CARD + SUPPLIER CHIP                                 */
@@ -526,15 +545,12 @@ td .button.small-button{white-space:nowrap}
 /* ============================================================ */
 /* ARCHIVED INVENTORY VIEW                                      */
 /* ============================================================ */
-
-/* Archived chip — always visible, orange accent when it has items */
 .chip.archived-chip{border-color:#f1dda9;color:#78591b;background:#fff7e6}
 .chip.archived-chip:hover{border-color:#d4a94c;color:#5a411a;background:#fff1d6}
 .chip.archived-chip.active{background:#78591b;color:#fff;border-color:#78591b}
 .chip.archived-chip .archived-count{background:#fde7c7;color:#78591b}
 .chip.archived-chip.active .archived-count{background:rgba(255,255,255,.28);color:#fff}
 
-/* Archived banner at top of the archived list */
 .archived-banner{
   display:flex;
   align-items:center;
@@ -555,21 +571,17 @@ td .button.small-button{white-space:nowrap}
 .archived-restore-all{flex:none;background:#fff;border-color:#f1dda9;color:#78591b;font-weight:700}
 .archived-restore-all:hover{background:#fff1d6;border-color:#d4a94c}
 
-/* Archived empty state */
 .empty-state.archived-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:60px 20px;color:#9aa4b1}
 .empty-state.archived-empty svg{color:#cbd5e1;margin-bottom:6px}
 .empty-state.archived-empty p{margin:0;font-size:15px;color:#4b5563}
 .empty-state.archived-empty p b{color:#0f172a}
 .empty-state.archived-empty small{font-size:12.5px;color:#6b7280;max-width:340px;text-align:center;line-height:1.55}
 
-/* Archived row date column */
 .archived-date{color:#78591b;font-weight:600;background:#fff7e6;padding:2px 8px;border-radius:20px;display:inline-block}
 
-/* Archived detail badge in the modal */
 .archived-detail-badge{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;background:#fff7e6;border:1px solid #f1dda9;border-radius:20px;color:#78591b;font-size:12.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;align-self:flex-start}
 .archived-detail-badge svg{color:#a57719}
 
-/* Mobile tweaks for archived banner */
 @media(max-width:680px){
   .archived-banner{padding:12px 14px;font-size:12.5px}
   .archived-restore-all{width:100%;justify-content:center}
@@ -579,8 +591,6 @@ td .button.small-button{white-space:nowrap}
 /* ============================================================ */
 /* ARCHIVE vs FORCE DELETE — visual distinction                 */
 /* ============================================================ */
-
-/* Archive: softer, brown-ish — visually distinct from destructive actions */
 .inventory-detail-actions .button.danger:not(.subtle){
   background:#fff7e6;
   border-color:#f1dda9;
@@ -593,7 +603,6 @@ td .button.small-button{white-space:nowrap}
   color:#5a411a;
 }
 
-/* Force delete: aggressive red — clearly destructive */
 .button.danger.subtle{
   background:#fee2e2 !important;
   border-color:#fca5a5 !important;
@@ -604,11 +613,4 @@ td .button.small-button{white-space:nowrap}
   background:#fecaca !important;
   border-color:#ef4444 !important;
   color:#7f1d1d !important;
-}
-
-.inventory-detail-actions{
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-  justify-content:flex-start;
 }
