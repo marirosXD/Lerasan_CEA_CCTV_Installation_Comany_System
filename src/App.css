@@ -1073,3 +1073,11 @@ td .button.small-button{white-space:nowrap}
   .payment-summary-strip{grid-template-columns:1fr 1fr;gap:10px}
   .payment-summary-status{grid-column:1/-1;justify-self:start}
 }
+
+.tool-site-hint{
+  display:block;
+  margin-top:4px;
+  font-size:11px;
+  color:#6b7280;
+  font-style:italic;
+}

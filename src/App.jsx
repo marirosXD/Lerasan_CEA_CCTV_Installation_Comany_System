@@ -266,9 +266,6 @@ function App() {
   }
   async function setOrderStatus(order, status) { await saveRecord('work_orders', { status }, order.id); }
 
-  // ============================================================
-  // MATERIAL INVENTORY
-  // ============================================================
   async function addInventory(event) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -304,18 +301,18 @@ function App() {
     else {
       setMessage(`"${item.item_name}" archived. View it in the Archived tab.`);
       setModal(null);
-      setInventoryFilter('archived');
+      setInventoryFilter(item.kind === 'tool' ? 'archived-tools' : 'archived');
       await loadWorkspace();
     }
   }
   async function restoreInventory(item) {
-    if (!window.confirm(`Restore "${item.item_name}" back to active inventory?`)) return;
+    if (!window.confirm(`Restore "${item.item_name}" back to active ${item.kind === 'tool' ? 'tools' : 'inventory'}?`)) return;
     const { error } = await supabase.rpc('restore_inventory', { item_id: item.id });
     if (error) setMessage(error.message);
     else {
       setMessage(`"${item.item_name}" restored.`);
       await loadWorkspace();
-      setInventoryFilter('all');
+      setInventoryFilter(item.kind === 'tool' ? 'tools' : 'all');
     }
   }
   async function restoreAllArchived(items) {
@@ -333,7 +330,7 @@ function App() {
     await loadWorkspace();
   }
   async function forceDeleteInventory(item) {
-    if (!window.confirm(`Permanently delete "${item.item_name}" AND all its stock history? This cannot be undone.`)) return;
+    if (!window.confirm(`Permanently delete "${item.item_name}" AND all its history? This cannot be undone.`)) return;
     if (!window.confirm(`Are you absolutely sure? This is your last chance.`)) return;
     const { error } = await supabase.rpc('force_delete_inventory', { item_id: item.id });
     if (error) setMessage(error.message); else { setMessage(`"${item.item_name}" permanently deleted.`); setModal(null); await loadWorkspace(); }
@@ -364,7 +361,7 @@ function App() {
   }
 
   // ============================================================
-  // TOOLS & EQUIPMENT
+  // TOOLS
   // ============================================================
   async function addTool(event) {
     event.preventDefault();
@@ -376,9 +373,8 @@ function App() {
       serial_tag: data.get('serial_tag') || null,
       unit: 'pc',
       stock_qty: 1,
-      unit_cost: Number(data.get('unit_cost') || 0),
+      unit_cost: 0,
       reorder_level: 1,
-      supplier: data.get('supplier') || null,
       tool_condition: data.get('tool_condition') || 'Good',
       tool_location: data.get('tool_location') || 'Office',
       archived: false,
@@ -396,8 +392,6 @@ function App() {
       item_name: data.get('item_name'),
       category: data.get('category') || 'Tools',
       serial_tag: data.get('serial_tag') || null,
-      unit_cost: Number(data.get('unit_cost') || 0),
-      supplier: data.get('supplier') || null,
       tool_condition: data.get('tool_condition') || 'Good',
       tool_location: data.get('tool_location') || 'Office',
     };
@@ -409,20 +403,27 @@ function App() {
     const data = new FormData(event.currentTarget);
     const employeeId = data.get('checked_out_by');
     const workOrderId = data.get('work_order_id') || null;
+    const site = String(data.get('site') || '').trim();
     const condition = data.get('condition_out') || 'Good';
     const notes = data.get('notes') || null;
+
+    if (!site) {
+      setMessage('Please enter the site the tool is going to.');
+      return;
+    }
 
     const { error } = await supabase.rpc('checkout_tool', {
       p_tool_id: tool.id,
       p_employee_id: employeeId,
       p_work_order_id: workOrderId,
       p_condition: condition,
+      p_site: site,
       p_notes: notes,
     });
     if (error) { setMessage(error.message); return; }
     setModal(null);
     await loadWorkspace();
-    setMessage(`"${tool.item_name}" checked out successfully.`);
+    setMessage(`"${tool.item_name}" checked out to site "${site}".`);
   }
   async function checkinTool(event, checkout) {
     event.preventDefault();
@@ -441,9 +442,6 @@ function App() {
     setMessage('Tool returned to office.');
   }
 
-  // ============================================================
-  // WORK ORDERS
-  // ============================================================
   async function createWorkOrder(event) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -541,10 +539,6 @@ function App() {
     resetHardwareRows();
     await loadWorkspace();
   }
-
-  // ============================================================
-  // EMPLOYEES + PROFILE + QUOTATIONS (unchanged logic)
-  // ============================================================
   async function updateProfile(event) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -742,9 +736,6 @@ function App() {
     setMessage(`Payment of ${money(amount)} recorded. Total paid: ${money(newTotalPaid)}.`);
   }
 
-  // ============================================================
-  // DERIVED LISTS
-  // ============================================================
   const visibleOrders = useMemo(() => (role === 'field_technician'
     ? orders.filter((order) => order.work_order_assignments?.some((assignment) => assignment.employees?.auth_user_id === sessionUserId))
     : orders), [orders, role, sessionUserId]);
@@ -753,7 +744,6 @@ function App() {
     return matchesSearch && (category === 'All statuses' || order.status === category);
   }), [category, search, visibleOrders]);
 
-  // Split inventory into materials vs tools
   const materialsOnly = useMemo(() => inventory.filter((item) => item.kind !== 'tool'), [inventory]);
   const toolsOnly = useMemo(() => inventory.filter((item) => item.kind === 'tool'), [inventory]);
 
@@ -786,7 +776,6 @@ function App() {
     return pool.filter((quote) => `${quote.client_name} ${quote.service_type} ${quote.status} ${quote.project_title || ''}`.toLowerCase().includes(quotationSearch.toLowerCase()));
   }, [quotations, quotationSearch, quotationFilter, activeQuotations, archivedQuotations]);
 
-  // Tools for the current technician (their own tools only)
   const myCheckouts = useMemo(() => {
     if (!myEmployee) return [];
     return toolCheckouts.filter((c) => c.checked_out_by === myEmployee.id);
@@ -843,20 +832,18 @@ function App() {
         />}
 
         {tab === 'inventory' && <>
-          {lowStockItems.length > 0 && !lowStockDismissed && inventoryFilter !== 'tools' && (
+          {lowStockItems.length > 0 && !lowStockDismissed && inventoryFilter !== 'tools' && inventoryFilter !== 'archived-tools' && (
             <div className="low-stock-alert">
               <div className="low-stock-alert-icon"><AlertTriangle size={20} /></div>
               <div className="low-stock-alert-body">
                 <b>{lowStockItems.length} material{lowStockItems.length === 1 ? '' : 's'} running low on stock</b>
                 <small>{lowStockItems.slice(0, 3).map((i) => i.item_name).join(' · ')}{lowStockItems.length > 3 ? ` · +${lowStockItems.length - 3} more` : ''}</small>
               </div>
-              <button className="button secondary small-button" onClick={() => { setInventoryFilter('low'); setLowStockDismissed(true); }}>
-                View low stock
-              </button>
+              <button className="button secondary small-button" onClick={() => { setInventoryFilter('low'); setLowStockDismissed(true); }}>View low stock</button>
               <button className="icon-button" title="Dismiss" onClick={() => setLowStockDismissed(true)}><X size={16} /></button>
             </div>
           )}
-          {toolsNeedingRepair.length > 0 && inventoryFilter === 'tools' && (
+          {toolsNeedingRepair.length > 0 && (inventoryFilter === 'tools' || inventoryFilter === 'archived-tools') && (
             <div className="low-stock-alert">
               <div className="low-stock-alert-icon"><AlertTriangle size={20} /></div>
               <div className="low-stock-alert-body">
@@ -883,15 +870,15 @@ function App() {
             onRestoreAll={restoreAllArchived}
             onForceDelete={forceDeleteInventory}
             onViewHistoryPage={() => setInventoryFilter('history')}
-            // Tool-specific
             tools={filteredTools}
             allTools={activeTools}
             archivedTools={archivedTools}
             toolCheckouts={toolCheckouts}
+            orders={orders}
             onToolOpen={(tool) => setModal({ type: 'tool-details', tool })}
             onToolEdit={(tool) => setModal({ type: 'edit-tool', tool })}
             onToolCheckout={(tool) => setModal({ type: 'tool-checkout', tool })}
-            onToolArchive={(tool) => setModal({ type: 'tool-archive-confirm', tool })}
+            onToolArchive={archiveInventory}
             onToolRestore={restoreInventory}
             onToolForceDelete={forceDeleteInventory}
             onToolHistory={(tool) => setModal({ type: 'tool-history', tool })}
@@ -903,6 +890,7 @@ function App() {
           myCheckouts={myCheckouts}
           myOpenCheckouts={myOpenCheckouts}
           myTools={myTools}
+          allTools={activeTools}
           orders={visibleOrders}
           onCheckout={(tool) => setModal({ type: 'tool-checkout', tool })}
           onCheckin={(checkout) => setModal({ type: 'tool-checkin', checkout })}
@@ -963,49 +951,28 @@ function App() {
         modal.type === 'tool-checkout' ? 'Check out tool' :
         modal.type === 'tool-checkin' ? 'Return tool' :
         modal.type === 'tool-history' ? 'Tool history' :
-        modal.type === 'tool-archive-confirm' ? 'Archive tool' :
         'Details'
       } onClose={() => { resetHardwareRows(); resetQuoteRows(); setCustomSupplier(false); setModal(null); }}>
 
         {modal.type === 'inventory' && <form className="form-grid" onSubmit={addInventory}>
           <Field name="item_name" label="What is it?" required placeholder="8MP Bullet Camera" />
           <Field name="category" label="Type" required placeholder="CCTV, Fire Safety, Wiring…" />
-          <label className="field">
-            <span>Measured in</span>
-            <input name="unit" placeholder="e.g. pieces, rolls, box" defaultValue="" />
-            <small>What form of measurement? pieces, rolls, box, meters…</small>
-          </label>
+          <label className="field"><span>Measured in</span><input name="unit" placeholder="e.g. pieces, rolls, box" defaultValue="" /><small>What form of measurement? pieces, rolls, box, meters…</small></label>
           <SupplierField customSupplier={customSupplier} setCustomSupplier={setCustomSupplier} />
           <Field name="unit_cost" label="Price per unit (₱)" type="number" min="0" step="0.01" required />
-          <label className="field">
-            <span>Quantity on hand</span>
-            <input name="stock_qty" type="number" min="0" required placeholder="e.g. 12" />
-            <small>The actual number of items you currently have</small>
-          </label>
-          <label className="field">
-            <span>Warn me when it drops to…</span>
-            <input name="reorder_level" type="number" min="0" defaultValue="1" />
-            <small>Get a low-stock alert when the quantity reaches this number</small>
-          </label>
+          <label className="field"><span>Quantity on hand</span><input name="stock_qty" type="number" min="0" required placeholder="e.g. 12" /><small>The actual number of items you currently have</small></label>
+          <label className="field"><span>Warn me when it drops to…</span><input name="reorder_level" type="number" min="0" defaultValue="1" /><small>Get a low-stock alert when the quantity reaches this number</small></label>
           <FormActions onCancel={() => { setCustomSupplier(false); setModal(null); }} />
         </form>}
 
         {modal.type === 'edit-inventory' && <form className="form-grid" onSubmit={(event) => editInventory(event, modal.item)}>
           <Field name="item_name" label="What is it?" required defaultValue={modal.item.item_name} />
           <Field name="category" label="Type" required defaultValue={modal.item.category} />
-          <label className="field">
-            <span>Measured in</span>
-            <input name="unit" placeholder="e.g. pieces, rolls, box" defaultValue={modal.item.unit || ''} />
-            <small>What form of measurement? pieces, rolls, box, meters…</small>
-          </label>
+          <label className="field"><span>Measured in</span><input name="unit" placeholder="e.g. pieces, rolls, box" defaultValue={modal.item.unit || ''} /><small>What form of measurement? pieces, rolls, box, meters…</small></label>
           <SupplierField customSupplier={customSupplier} setCustomSupplier={setCustomSupplier} defaultValue={modal.item.supplier || ''} />
           <Field name="unit_cost" label="Price per unit (₱)" type="number" min="0" step="0.01" required defaultValue={modal.item.unit_cost} />
-          <label className="field">
-            <span>Warn me when it drops to…</span>
-            <input name="reorder_level" type="number" min="0" defaultValue={modal.item.reorder_level ?? 1} />
-            <small>Get a low-stock alert when the quantity reaches this number</small>
-          </label>
-          <div className="field full stock-hint"><small>To change the quantity on hand, use the <b>Adjust stock</b> button — this keeps a clean history of every add and subtraction.</small></div>
+          <label className="field"><span>Warn me when it drops to…</span><input name="reorder_level" type="number" min="0" defaultValue={modal.item.reorder_level ?? 1} /><small>Get a low-stock alert when the quantity reaches this number</small></label>
+          <div className="field full stock-hint"><small>To change the quantity on hand, use the <b>Adjust stock</b> button.</small></div>
           <FormActions onCancel={() => { setCustomSupplier(false); setModal(null); }} />
         </form>}
 
@@ -1017,10 +984,7 @@ function App() {
           <Detail label="Supplier" value={modal.item.supplier || 'Not recorded'} icon={BriefcaseBusiness} />
           <Detail label="Warn when it drops to" value={formatQty(modal.item.reorder_level ?? 1, modal.item.unit)} icon={Activity} />
           {Number(modal.item.stock_qty) <= Number(modal.item.reorder_level ?? 1) && (
-            <div className="detail-block detail-low-stock">
-              <AlertTriangle size={15} />
-              <div><b>Low stock</b><small>This item is at or below its reorder threshold. Consider restocking soon.</small></div>
-            </div>
+            <div className="detail-block detail-low-stock"><AlertTriangle size={15} /><div><b>Low stock</b><small>This item is at or below its reorder threshold.</small></div></div>
           )}
           {role === 'administrator' && <>
             <div className="form-actions inventory-detail-actions primary-actions">
@@ -1054,55 +1018,22 @@ function App() {
 
         {modal.type === 'stock-history' && <StockHistoryView item={modal.item} transactions={transactions.filter((t) => t.inventory_item_id === modal.item.id)} />}
 
-        {/* ============================================================
-            TOOL MODALS
-           ============================================================ */}
+        {/* TOOL MODALS */}
         {modal.type === 'tool' && <form className="form-grid" onSubmit={addTool}>
           <Field name="item_name" label="Tool / equipment name" required placeholder="e.g. Bosch Cordless Drill" />
           <Field name="category" label="Category" required placeholder="Power Tools, Test Equipment…" defaultValue="Tools" />
-          <label className="field">
-            <span>Serial / Asset Tag number</span>
-            <input name="serial_tag" placeholder="e.g. DR-001" />
-            <small>Unique identifier for this physical tool</small>
-          </label>
-          <Field name="unit_cost" label="Purchase cost (₱)" type="number" min="0" step="0.01" required />
-          <Field name="supplier" label="Supplier" placeholder="Bright Light Electrical Supply" />
-          <label className="field">
-            <span>Condition</span>
-            <select name="tool_condition" defaultValue="Good">
-              {TOOL_CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </label>
-          <label className="field">
-            <span>Current location</span>
-            <select name="tool_location" defaultValue="Office">
-              {TOOL_LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}
-            </select>
-          </label>
+          <label className="field"><span>Serial / Asset Tag number</span><input name="serial_tag" placeholder="e.g. DR-001" /><small>Unique identifier for this physical tool</small></label>
+          <label className="field"><span>Condition</span><select name="tool_condition" defaultValue="Good">{TOOL_CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}</select></label>
+          <label className="field full"><span>Current location</span><select name="tool_location" defaultValue="Office">{TOOL_LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}</select><small>Where is the tool right now?</small></label>
           <FormActions onCancel={() => setModal(null)} />
         </form>}
 
         {modal.type === 'edit-tool' && <form className="form-grid" onSubmit={(event) => editTool(event, modal.tool)}>
           <Field name="item_name" label="Tool / equipment name" required defaultValue={modal.tool.item_name} />
           <Field name="category" label="Category" required defaultValue={modal.tool.category} />
-          <label className="field">
-            <span>Serial / Asset Tag number</span>
-            <input name="serial_tag" defaultValue={modal.tool.serial_tag || ''} />
-          </label>
-          <Field name="unit_cost" label="Purchase cost (₱)" type="number" min="0" step="0.01" required defaultValue={modal.tool.unit_cost} />
-          <Field name="supplier" label="Supplier" defaultValue={modal.tool.supplier || ''} />
-          <label className="field">
-            <span>Condition</span>
-            <select name="tool_condition" defaultValue={modal.tool.tool_condition || 'Good'}>
-              {TOOL_CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </label>
-          <label className="field">
-            <span>Current location</span>
-            <select name="tool_location" defaultValue={modal.tool.tool_location || 'Office'}>
-              {TOOL_LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}
-            </select>
-          </label>
+          <label className="field"><span>Serial / Asset Tag number</span><input name="serial_tag" defaultValue={modal.tool.serial_tag || ''} /></label>
+          <label className="field"><span>Condition</span><select name="tool_condition" defaultValue={modal.tool.tool_condition || 'Good'}>{TOOL_CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}</select></label>
+          <label className="field full"><span>Current location</span><select name="tool_location" defaultValue={modal.tool.tool_location || 'Office'}>{TOOL_LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}</select></label>
           <FormActions onCancel={() => setModal(null)} />
         </form>}
 
@@ -1115,12 +1046,12 @@ function App() {
             <Detail label="Serial / Tag" value={modal.tool.serial_tag || 'Not recorded'} icon={FileText} />
             <Detail label="Condition" value={modal.tool.tool_condition || 'Good'} icon={Activity} />
             <Detail label="Location" value={modal.tool.tool_location || 'Office'} icon={MapPin} />
-            <Detail label="Purchase cost" value={money(modal.tool.unit_cost)} icon={FileText} />
             {openCheckout && (
               <div className="detail-block tool-open-checkout">
                 <b>Currently checked out</b>
                 <small>By {openCheckout.employees?.full_name || 'Unknown'} · Since {formatDateTime(openCheckout.checked_out_at)}</small>
-                {openCheckout.work_orders?.client_name && <small>For: {openCheckout.work_orders.client_name}</small>}
+                {openCheckout.site && <small>At: {openCheckout.site}</small>}
+                {openCheckout.work_orders?.client_name && <small>Work order: {openCheckout.work_orders.client_name}</small>}
               </div>
             )}
             {history.length > 0 && (
@@ -1174,6 +1105,11 @@ function App() {
               {visibleOrders.map((o) => <option key={o.id} value={o.id}>{o.client_name} · {o.service_type}</option>)}
             </select>
           </label>
+          <label className="field full">
+            <span>Site / Location <b style={{ color: '#b91c1c' }}>*</b></span>
+            <input name="site" placeholder="e.g. BMQ, Boulevard, Davao City" required />
+            <small>Where is the tool going? Required for tracking.</small>
+          </label>
           <label className="field">
             <span>Condition when checked out</span>
             <select name="condition_out" defaultValue={modal.tool.tool_condition || 'Good'}>
@@ -1223,7 +1159,7 @@ function App() {
                 </div>
                 <div className="history-body">
                   <b>{h.checked_in_at ? 'Returned to office' : 'Checked out'}</b>
-                  <small>{h.employees?.full_name || 'Unknown'}{h.work_orders?.client_name ? ` · ${h.work_orders.client_name}` : ''}{h.condition_in ? ` · Condition: ${h.condition_in}` : ''}</small>
+                  <small>{h.employees?.full_name || 'Unknown'}{h.site ? ` · ${h.site}` : ''}{h.condition_in ? ` · Condition: ${h.condition_in}` : ''}</small>
                 </div>
                 <span className="history-date">{formatDateTime(h.checked_in_at || h.checked_out_at)}</span>
               </div>)}
@@ -1235,16 +1171,8 @@ function App() {
           <Field name="client_name" label="Client name" required />
           <Field name="service_type" label="Service" required placeholder="CCTV Installation" />
           <Field name="location" label="Location" required placeholder="Davao City" />
-          <label className="field">
-            <span>Scheduled date</span>
-            <input name="scheduled_at" type="date" min={todayISO()} />
-            <small>Must be today or a later date — the CEO cannot schedule work in the past.</small>
-          </label>
-          <label className="field">
-            <span>Scheduled time</span>
-            <input name="scheduled_time" type="time" />
-            <small>Optional — leave blank if the time isn't confirmed yet.</small>
-          </label>
+          <label className="field"><span>Scheduled date</span><input name="scheduled_at" type="date" min={todayISO()} /><small>Must be today or a later date.</small></label>
+          <label className="field"><span>Scheduled time</span><input name="scheduled_time" type="time" /><small>Optional.</small></label>
           <TechnicianChecklist employees={employees} />
           <HardwareBuilder rows={hardwareRows} onAdd={addHardwareRow} onUpdate={updateHardwareRow} onRemove={removeHardwareRow} />
           <label className="field full"><span>Work notes</span><textarea name="notes" rows="2" /></label>
@@ -1255,16 +1183,8 @@ function App() {
           <Field name="client_name" label="Client name" required defaultValue={modal.order.client_name} />
           <Field name="service_type" label="Service" required defaultValue={modal.order.service_type} />
           <Field name="location" label="Location" required defaultValue={modal.order.location} />
-          <label className="field">
-            <span>Scheduled date</span>
-            <input name="scheduled_at" type="date" defaultValue={modal.order.scheduled_at || ''} min={todayISO()} />
-            <small>Must be today or a later date.</small>
-          </label>
-          <label className="field">
-            <span>Scheduled time</span>
-            <input name="scheduled_time" type="time" defaultValue={modal.order.scheduled_time || ''} />
-            <small>Optional.</small>
-          </label>
+          <label className="field"><span>Scheduled date</span><input name="scheduled_at" type="date" defaultValue={modal.order.scheduled_at || ''} min={todayISO()} /><small>Must be today or a later date.</small></label>
+          <label className="field"><span>Scheduled time</span><input name="scheduled_time" type="time" defaultValue={modal.order.scheduled_time || ''} /><small>Optional.</small></label>
           <TechnicianChecklist employees={employees} selectedIds={modal.order.work_order_assignments?.map((a) => a.employee_id) || []} />
           <HardwareBuilder rows={hardwareRows} onAdd={addHardwareRow} onUpdate={updateHardwareRow} onRemove={removeHardwareRow} />
           <label className="field full"><span>Work notes</span><textarea name="notes" rows="2" defaultValue={modal.order.notes || ''} /></label>
@@ -1281,10 +1201,7 @@ function App() {
             <span>Login account</span>
             <label className="login-toggle-row">
               <input type="checkbox" name="wants_login" defaultChecked />
-              <div className="login-toggle-copy">
-                <b>Send password setup email to the above address</b>
-                <small>Staff clicks the link, sets their password, and can log in as Field Technician to view their schedule.</small>
-              </div>
+              <div className="login-toggle-copy"><b>Send password setup email to the above address</b><small>Staff clicks the link, sets their password, and can log in as Field Technician to view their schedule.</small></div>
             </label>
           </div>
           <FormActions onCancel={() => setModal(null)} />
@@ -1301,30 +1218,16 @@ function App() {
         </form>}
 
         {modal.type === 'employee-details' && <div className="record-details employee-details-view">
-          <div className="employee-profile-heading">
-            <Avatar name={modal.employee.full_name} src={modal.employee.avatar_url} large />
-            <div><h3>{modal.employee.full_name}</h3><span>{modal.employee.job_title}</span></div>
-          </div>
+          <div className="employee-profile-heading"><Avatar name={modal.employee.full_name} src={modal.employee.avatar_url} large /><div><h3>{modal.employee.full_name}</h3><span>{modal.employee.job_title}</span></div></div>
           <Detail label="Email" value={modal.employee.email || 'Not recorded'} icon={Mail} />
           <Detail label="Phone" value={modal.employee.phone || 'Not recorded'} icon={Activity} />
           <Detail label="Status" value={modal.employee.active ? 'Active' : 'Inactive'} icon={BadgeCheck} />
           {modal.employee.auth_user_id && <Detail label="Login account" value="Linked" icon={KeyRound} />}
-          {!modal.employee.auth_user_id && <div className="detail-block login-hint">
-            <b>Login account</b>
-            <small>This staff can't log in yet. Send them a password setup email so they can access their schedule.</small>
-          </div>}
+          {!modal.employee.auth_user_id && <div className="detail-block login-hint"><b>Login account</b><small>This staff can't log in yet. Send them a password setup email so they can access their schedule.</small></div>}
           <div className="form-actions employee-detail-actions">
             <button className="button danger" onClick={() => deleteEmployee(modal.employee)}><Trash2 size={16} /> Delete employee</button>
-            {modal.employee.email && !modal.employee.auth_user_id && (
-              <button className="button secondary" onClick={() => sendSignInLink(modal.employee.email, 'They will set their password and can log in with the Field Technician role.')}>
-                <MailPlus size={16} /> Send password setup email
-              </button>
-            )}
-            {modal.employee.email && modal.employee.auth_user_id && (
-              <button className="button secondary" onClick={() => sendSignInLink(modal.employee.email, 'They can set a new password from this link.')}>
-                <MailPlus size={16} /> Send password reset email
-              </button>
-            )}
+            {modal.employee.email && !modal.employee.auth_user_id && <button className="button secondary" onClick={() => sendSignInLink(modal.employee.email, 'They will set their password and can log in with the Field Technician role.')}><MailPlus size={16} /> Send password setup email</button>}
+            {modal.employee.email && modal.employee.auth_user_id && <button className="button secondary" onClick={() => sendSignInLink(modal.employee.email, 'They can set a new password from this link.')}><MailPlus size={16} /> Send password reset email</button>}
             <button className="button primary" onClick={() => setModal({ type: 'edit-employee', employee: modal.employee })}>Edit</button>
           </div>
         </div>}
@@ -1334,66 +1237,36 @@ function App() {
           <Field name="location" label="Location" placeholder="e.g. Brgy Bonifacio st. Davao City" />
           <Field name="project_title" label="Project" required placeholder="e.g. waterlines submeter installation" />
           <Field name="quote_date" label="Date" type="date" defaultValue={todayISO()} />
-
           <div className="field full quote-builder">
             <span>Items</span>
-            <div className="quote-builder-head">
-              <span>Description</span><span>Qty</span><span>Unit</span><span>Unit Cost</span><span>Amount</span><span />
-            </div>
+            <div className="quote-builder-head"><span>Description</span><span>Qty</span><span>Unit</span><span>Unit Cost</span><span>Amount</span><span /></div>
             <div className="quote-builder-rows">
               {quoteRows.map((row, index) => {
                 const amount = (Number(row.quantity) || 0) * (Number(row.unit_cost) || 0);
-                return (
-                  <div className="quote-builder-row" key={index}>
-                    <input className="quote-desc" placeholder="e.g. SUBMETER" value={row.description} onChange={(e) => updateQuoteRow(index, 'description', e.target.value)} />
-                    <input className="quote-qty" type="number" min="1" placeholder="1" value={row.quantity} onChange={(e) => updateQuoteRow(index, 'quantity', e.target.value)} />
-                    <input className="quote-unit" placeholder="pcs" value={row.unit} onChange={(e) => updateQuoteRow(index, 'unit', e.target.value)} />
-                    <input className="quote-cost" type="number" min="0" step="0.01" placeholder="0.00" value={row.unit_cost} onChange={(e) => updateQuoteRow(index, 'unit_cost', e.target.value)} />
-                    <span className="quote-amount">{money(amount)}</span>
-                    <button type="button" className="icon-button danger" onClick={() => removeQuoteRow(index)} disabled={quoteRows.length === 1}><X size={16} /></button>
-                  </div>
-                );
+                return <div className="quote-builder-row" key={index}>
+                  <input className="quote-desc" placeholder="e.g. SUBMETER" value={row.description} onChange={(e) => updateQuoteRow(index, 'description', e.target.value)} />
+                  <input className="quote-qty" type="number" min="1" placeholder="1" value={row.quantity} onChange={(e) => updateQuoteRow(index, 'quantity', e.target.value)} />
+                  <input className="quote-unit" placeholder="pcs" value={row.unit} onChange={(e) => updateQuoteRow(index, 'unit', e.target.value)} />
+                  <input className="quote-cost" type="number" min="0" step="0.01" placeholder="0.00" value={row.unit_cost} onChange={(e) => updateQuoteRow(index, 'unit_cost', e.target.value)} />
+                  <span className="quote-amount">{money(amount)}</span>
+                  <button type="button" className="icon-button danger" onClick={() => removeQuoteRow(index)} disabled={quoteRows.length === 1}><X size={16} /></button>
+                </div>;
               })}
             </div>
             <button type="button" className="button secondary small-button add-row-button" onClick={addQuoteRow}><Plus size={15} /> Add item</button>
           </div>
-
           <Field name="labor_cost" label="Labor (₱)" type="number" min="0" step="0.01" defaultValue="0" />
-          <div className="field quote-summary">
-            <span>Subtotal</span>
-            <input value={money(quoteRows.reduce((sum, r) => sum + (Number(r.quantity) || 0) * (Number(r.unit_cost) || 0), 0))} readOnly />
-          </div>
+          <div className="field quote-summary"><span>Subtotal</span><input value={money(quoteRows.reduce((sum, r) => sum + (Number(r.quantity) || 0) * (Number(r.unit_cost) || 0), 0))} readOnly /></div>
           <label className="field full"><span>Notes (optional)</span><textarea name="notes" rows="2" /></label>
           <FormActions onCancel={() => { resetQuoteRows(); setModal(null); }} />
         </form>}
 
         {modal.type === 'record-payment' && <form className="form-grid" onSubmit={(event) => recordPayment(event, modal.quote)}>
-          <div className="field full">
-            <span>Quotation</span>
-            <div className="receive-item-card">
-              <b>{modal.quote.client_name} — {modal.quote.project_title || modal.quote.service_type}</b>
-              <small>Total: {money(quoteGrandTotal(modal.quote))} · Currently paid: {money(modal.quote.amount_paid || 0)} · Balance: {money(quoteBalance(modal.quote))}</small>
-            </div>
-          </div>
-          <label className="field">
-            <span>Amount received (₱)</span>
-            <input name="amount" type="number" min="0.01" step="0.01" required autoFocus placeholder={String(Math.round(quoteBalance(modal.quote)))} defaultValue={Math.round(quoteBalance(modal.quote) * 100) / 100} />
-            <small>Default is the remaining balance. Adjust for partial payments.</small>
-          </label>
-          <label className="field">
-            <span>Payment date</span>
-            <input name="payment_date" type="date" defaultValue={todayISO()} />
-          </label>
-          <label className="field">
-            <span>Method</span>
-            <select name="payment_method" defaultValue="Cash">
-              <option>Cash</option><option>Bank Transfer</option><option>GCash</option><option>Check</option><option>Other</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>Notes (optional)</span>
-            <input name="payment_notes" placeholder="e.g. 50% down payment received" />
-          </label>
+          <div className="field full"><span>Quotation</span><div className="receive-item-card"><b>{modal.quote.client_name} — {modal.quote.project_title || modal.quote.service_type}</b><small>Total: {money(quoteGrandTotal(modal.quote))} · Currently paid: {money(modal.quote.amount_paid || 0)} · Balance: {money(quoteBalance(modal.quote))}</small></div></div>
+          <label className="field"><span>Amount received (₱)</span><input name="amount" type="number" min="0.01" step="0.01" required autoFocus placeholder={String(Math.round(quoteBalance(modal.quote)))} defaultValue={Math.round(quoteBalance(modal.quote) * 100) / 100} /><small>Default is the remaining balance.</small></label>
+          <label className="field"><span>Payment date</span><input name="payment_date" type="date" defaultValue={todayISO()} /></label>
+          <label className="field"><span>Method</span><select name="payment_method" defaultValue="Cash"><option>Cash</option><option>Bank Transfer</option><option>GCash</option><option>Check</option><option>Other</option></select></label>
+          <label className="field"><span>Notes (optional)</span><input name="payment_notes" placeholder="e.g. 50% down payment received" /></label>
           <FormActions onCancel={() => setModal(null)} />
         </form>}
       </Modal>}
@@ -1402,11 +1275,7 @@ function App() {
       {previewQuote && <QuotePreviewModal
         quote={quotations.find((q) => q.id === previewQuote.id) || previewQuote}
         onClose={() => setPreviewQuote(null)}
-        onPrint={() => {
-          const q = quotations.find((item) => item.id === previewQuote.id) || previewQuote;
-          setPreviewQuote(null);
-          setTimeout(() => setPrintingQuote(q), 60);
-        }}
+        onPrint={() => { const q = quotations.find((item) => item.id === previewQuote.id) || previewQuote; setPreviewQuote(null); setTimeout(() => setPrintingQuote(q), 60); }}
         onRecordPayment={(q) => { setPreviewQuote(null); setModal({ type: 'record-payment', quote: q }); }}
         onArchive={archiveQuotation}
         onForceDelete={forceDeleteQuotation}
@@ -1505,10 +1374,7 @@ function Dashboard({ role, profile, orders, inventory, employees, lowStockItems,
     </div>
     {lowStockItems.length > 0 && <button className="dashboard-low-stock-banner" onClick={onViewLowStock}>
       <div className="low-stock-alert-icon small"><AlertTriangle size={18} /></div>
-      <div className="dashboard-low-stock-body">
-        <b>{lowStockItems.length} material{lowStockItems.length === 1 ? '' : 's'} need restocking</b>
-        <small>{lowStockItems.slice(0, 4).map((i) => i.item_name).join(' · ')}{lowStockItems.length > 4 ? ` · +${lowStockItems.length - 4} more` : ''}</small>
-      </div>
+      <div className="dashboard-low-stock-body"><b>{lowStockItems.length} material{lowStockItems.length === 1 ? '' : 's'} need restocking</b><small>{lowStockItems.slice(0, 4).map((i) => i.item_name).join(' · ')}{lowStockItems.length > 4 ? ` · +${lowStockItems.length - 4} more` : ''}</small></div>
       <ArrowRight size={16} />
     </button>}
     <div className="dashboard-grid">
@@ -1530,15 +1396,12 @@ function Dashboard({ role, profile, orders, inventory, employees, lowStockItems,
 function Stat({ label, value, icon: Icon, tone = 'blue' }) { return <div className="stat-card"><div className={`stat-icon ${tone}`}><Icon size={19} /></div><div><span>{label}</span><strong>{value}</strong></div></div>; }
 function QuickLink({ icon: Icon, title, subtitle, onClick }) { return <button className="quick-link" onClick={onClick}><span className="quick-icon"><Icon size={18} /></span><span><b>{title}</b><small>{subtitle}</small></span><ArrowRight size={16} /></button>; }
 
-// ============================================================
-// INVENTORY VIEW (materials + tools tabs)
-// ============================================================
 function InventoryView({
   inventory, archived, allInventory, transactions,
   search, setSearch, filter, setFilter,
   onAdd, onAddTool, onReceiveAll, onReceive, onOpen, onAdjust, onHistory,
   onRestore, onRestoreAll, onForceDelete, onViewHistoryPage,
-  tools, allTools, archivedTools, toolCheckouts,
+  tools, allTools, archivedTools, toolCheckouts, orders,
   onToolOpen, onToolEdit, onToolCheckout, onToolArchive, onToolRestore, onToolForceDelete, onToolHistory,
 }) {
   const lowCount = allInventory.filter((item) => Number(item.stock_qty) <= Number(item.reorder_level ?? 1)).length;
@@ -1558,21 +1421,11 @@ function InventoryView({
 
     <div className="inventory-filters">
       <button className={filter === 'all' ? 'chip active' : 'chip'} onClick={() => setFilter('all')}>Materials</button>
-      <button className={filter === 'low' ? 'chip active' : 'chip'} onClick={() => setFilter('low')}>
-        Low stock {lowCount > 0 && <span className="chip-count">{lowCount}</span>}
-      </button>
-      <button className={filter === 'tools' ? 'chip active tools-chip' : 'chip tools-chip'} onClick={() => setFilter('tools')}>
-        <Wrench size={13} /> Tools & Equipment
-      </button>
-      <button className={filter === 'history' ? 'chip active' : 'chip'} onClick={onViewHistoryPage}>
-        <ClipboardList size={13} /> History
-      </button>
-      <button className={filter === 'archived' ? 'chip active archived-chip' : 'chip archived-chip'} onClick={() => setFilter('archived')}>
-        <Archive size={13} /> Archived Materials {archived.length > 0 && <span className="chip-count archived-count">{archived.length}</span>}
-      </button>
-      <button className={filter === 'archived-tools' ? 'chip active archived-chip' : 'chip archived-chip'} onClick={() => setFilter('archived-tools')}>
-        <Archive size={13} /> Archived Tools {archivedTools.length > 0 && <span className="chip-count archived-count">{archivedTools.length}</span>}
-      </button>
+      <button className={filter === 'low' ? 'chip active' : 'chip'} onClick={() => setFilter('low')}>Low stock {lowCount > 0 && <span className="chip-count">{lowCount}</span>}</button>
+      <button className={filter === 'tools' ? 'chip active tools-chip' : 'chip tools-chip'} onClick={() => setFilter('tools')}><Wrench size={13} /> Tools & Equipment</button>
+      <button className={filter === 'history' ? 'chip active' : 'chip'} onClick={onViewHistoryPage}><ClipboardList size={13} /> History</button>
+      <button className={filter === 'archived' ? 'chip active archived-chip' : 'chip archived-chip'} onClick={() => setFilter('archived')}><Archive size={13} /> Archived Materials {archived.length > 0 && <span className="chip-count archived-count">{archived.length}</span>}</button>
+      <button className={filter === 'archived-tools' ? 'chip active archived-chip' : 'chip archived-chip'} onClick={() => setFilter('archived-tools')}><Archive size={13} /> Archived Tools {archivedTools.length > 0 && <span className="chip-count archived-count">{archivedTools.length}</span>}</button>
     </div>
 
     {showHistoryPage ? (
@@ -1580,22 +1433,9 @@ function InventoryView({
     ) : filter === 'archived' ? (
       <ArchivedListView archived={archived} onRestore={onRestore} onRestoreAll={() => onRestoreAll(archived)} onOpen={(item) => onOpen(item)} />
     ) : showArchivedTools ? (
-      <ArchivedToolsList
-        archived={archivedTools}
-        onRestore={onToolRestore}
-        onForceDelete={onToolForceDelete}
-        onOpen={onToolOpen}
-      />
+      <ArchivedToolsList archived={archivedTools} onRestore={onToolRestore} onForceDelete={onToolForceDelete} onOpen={onToolOpen} />
     ) : showToolsTab ? (
-      <ToolsListView
-        tools={tools}
-        search={search}
-        setSearch={setSearch}
-        onOpen={onToolOpen}
-        onCheckout={onToolCheckout}
-        onHistory={onToolHistory}
-        onEdit={onToolEdit}
-      />
+      <ToolsListView tools={tools} search={search} setSearch={setSearch} orders={orders} onOpen={onToolOpen} onCheckout={onToolCheckout} onHistory={onToolHistory} onEdit={onToolEdit} />
     ) : (
       <>
         <ListSearch value={search} onChange={setSearch} placeholder="Search material, type, or supplier…" />
@@ -1627,7 +1467,7 @@ function InventoryView({
   </section>;
 }
 
-function ToolsListView({ tools, search, setSearch, onOpen, onCheckout, onHistory, onEdit }) {
+function ToolsListView({ tools, search, setSearch, orders, onOpen, onCheckout, onHistory, onEdit }) {
   return <>
     <ListSearch value={search} onChange={setSearch} placeholder="Search tool, tag, category, or condition…" />
     <div className="table-scroll"><table>
@@ -1638,16 +1478,15 @@ function ToolsListView({ tools, search, setSearch, onOpen, onCheckout, onHistory
           const location = tool.tool_location || 'Office';
           const condClass = condition === 'Good' ? 'completed' : condition === 'Needs Repair' ? 'low' : 'pending';
           const locClass = location === 'Office' ? 'completed' : location === 'Under Repair' ? 'low' : 'progress';
+          const wo = tool.current_work_order_id ? orders.find((o) => o.id === tool.current_work_order_id) : null;
           return <tr key={tool.id} className="clickable-row" onClick={() => onOpen?.(tool)}>
-            <td>
-              <button className="table-link" onClick={(event) => { event.stopPropagation(); onOpen?.(tool); }}>
-                <b>{tool.item_name}</b>
-                <small>{tool.category}</small>
-              </button>
-            </td>
+            <td><button className="table-link" onClick={(event) => { event.stopPropagation(); onOpen?.(tool); }}><b>{tool.item_name}</b><small>{tool.category}</small></button></td>
             <td><span className="qty-value">{tool.serial_tag || '—'}</span></td>
             <td><span className={`status-chip ${condClass}`}>{condition}</span></td>
-            <td><span className={`status-chip ${locClass}`}>{location}</span></td>
+            <td>
+              <span className={`status-chip ${locClass}`}>{location}</span>
+              {tool.current_site && <small className="tool-site-hint">At: {tool.current_site}{wo ? ` · ${wo.client_name}` : ''}</small>}
+            </td>
             <td>
               <div className="row-actions">
                 {location === 'Office' && <button className="button secondary small-button" onClick={(event) => { event.stopPropagation(); onCheckout(tool); }}><ArrowRight size={14} /> Check out</button>}
@@ -1666,22 +1505,12 @@ function ToolsListView({ tools, search, setSearch, onOpen, onCheckout, onHistory
 function ArchivedToolsList({ archived, onRestore, onForceDelete, onOpen }) {
   if (!archived.length) {
     return <>
-      <div className="archived-banner">
-        <Archive size={15} />
-        <span>Archived tools are hidden from the active list but their history is preserved.</span>
-      </div>
-      <div className="empty-state archived-empty">
-        <Archive size={40} strokeWidth={1.5} />
-        <p><b>No archived tools yet.</b></p>
-        <small>Tools you archive from the Tools list will appear here.</small>
-      </div>
+      <div className="archived-banner"><Archive size={15} /><span>Archived tools are hidden from the active list but their history is preserved.</span></div>
+      <div className="empty-state archived-empty"><Archive size={40} strokeWidth={1.5} /><p><b>No archived tools yet.</b></p><small>Tools you archive from the Tools list will appear here.</small></div>
     </>;
   }
   return <>
-    <div className="archived-banner">
-      <Archive size={15} />
-      <span>{archived.length} archived tool{archived.length === 1 ? '' : 's'}.</span>
-    </div>
+    <div className="archived-banner"><Archive size={15} /><span>{archived.length} archived tool{archived.length === 1 ? '' : 's'}.</span></div>
     <div className="table-scroll"><table>
       <thead><tr><th>Tool</th><th>Tag</th><th>Condition</th><th>Archived</th><th>Actions</th></tr></thead>
       <tbody>
@@ -1690,57 +1519,44 @@ function ArchivedToolsList({ archived, onRestore, onForceDelete, onOpen }) {
           <td><span className="qty-value">{tool.serial_tag || '—'}</span></td>
           <td><span className="status-chip neutral">{tool.tool_condition || 'Good'}</span></td>
           <td><small className="archived-date">{tool.archived_at ? formatDateTime(tool.archived_at) : 'Unknown'}</small></td>
-          <td>
-            <div className="row-actions">
-              <button className="button danger subtle small-button" onClick={(event) => { event.stopPropagation(); onForceDelete(tool); }}><Trash2 size={14} /> Delete</button>
-              <button className="button primary small-button" onClick={(event) => { event.stopPropagation(); onRestore(tool); }}><RotateCcw size={14} /> Restore</button>
-            </div>
-          </td>
+          <td><div className="row-actions">
+            <button className="button danger subtle small-button" onClick={(event) => { event.stopPropagation(); onForceDelete(tool); }}><Trash2 size={14} /> Delete</button>
+            <button className="button primary small-button" onClick={(event) => { event.stopPropagation(); onRestore(tool); }}><RotateCcw size={14} /> Restore</button>
+          </div></td>
         </tr>)}
       </tbody>
     </table></div>
   </>;
 }
 
-// ============================================================
-// MY TOOLS (Field Technician)
-// ============================================================
-function MyToolsView({ myEmployee, myCheckouts, myOpenCheckouts, myTools, orders, onCheckout, onCheckin }) {
+function MyToolsView({ myEmployee, myCheckouts, myOpenCheckouts, myTools, allTools, orders, onCheckout, onCheckin }) {
   if (!myEmployee) {
     return <section className="panel">
       <div className="panel-heading"><div><h3>My Tools</h3><p>Tools you currently have checked out</p></div></div>
       <div className="empty-state">Your employee record isn't linked yet. Ask the administrator to link your account.</div>
     </section>;
   }
+  const availableTools = allTools.filter((t) => t.tool_location === 'Office');
   return <>
     <div className="welcome-row">
-      <div>
-        <div className="eyebrow">FIELD OPERATIONS</div>
-        <h2>My Tools</h2>
-        <p>Tools currently checked out to you, and tools you can take to a job site.</p>
-      </div>
+      <div><div className="eyebrow">FIELD OPERATIONS</div><h2>My Tools</h2><p>Tools currently checked out to you, and tools you can take to a job site.</p></div>
     </div>
 
     <div className="stats-grid three">
       <Stat label="Tools I hold" value={myOpenCheckouts.length} icon={Wrench} tone="amber" />
       <Stat label="Tools I've used" value={myCheckouts.length} icon={Check} tone="green" />
-      <Stat label="Available in office" value={myTools.filter((t) => t.tool_location === 'Office').length} icon={Package} />
+      <Stat label="Available in office" value={availableTools.length} icon={Package} />
     </div>
 
     <section className="panel">
-      <div className="panel-heading">
-        <div><h3>Currently in my possession</h3><p>Tools I've checked out and haven't returned yet</p></div>
-      </div>
+      <div className="panel-heading"><div><h3>Currently in my possession</h3><p>Tools I've checked out and haven't returned yet</p></div></div>
       {myOpenCheckouts.length ? <div className="order-list">
         {myOpenCheckouts.map((co) => {
           const tool = myTools.find((t) => t.id === co.tool_id);
           return <div className="order-row" key={co.id} style={{ cursor: 'default' }}>
-            <div className="order-service">
-              <span className="order-icon"><Wrench size={17} /></span>
-              <span><b>{tool?.item_name || 'Tool'}</b><small>{tool?.serial_tag || ''}</small></span>
-            </div>
+            <div className="order-service"><span className="order-icon"><Wrench size={17} /></span><span><b>{tool?.item_name || 'Tool'}</b><small>{tool?.serial_tag || ''}</small></span></div>
             <span className="order-location"><CalendarDays size={14} />{formatDateTime(co.checked_out_at)}</span>
-            <span className="order-techs">{co.work_orders?.client_name || 'No work order'}</span>
+            <span className="order-techs">{co.site || co.work_orders?.client_name || 'No site'}</span>
             <button className="button primary small-button" onClick={() => onCheckin(co)}><ArrowDownToLine size={14} /> Return</button>
           </div>;
         })}
@@ -1748,20 +1564,25 @@ function MyToolsView({ myEmployee, myCheckouts, myOpenCheckouts, myTools, orders
     </section>
 
     <section className="panel">
-      <div className="panel-heading">
-        <div><h3>My tool history</h3><p>Tools you have used in the past</p></div>
-      </div>
+      <div className="panel-heading"><div><h3>Available tools in office</h3><p>Tools you can check out for a job</p></div></div>
+      {availableTools.length ? <div className="order-list">
+        {availableTools.map((tool) => <div className="order-row" key={tool.id} style={{ cursor: 'default' }}>
+          <div className="order-service"><span className="order-icon"><Wrench size={17} /></span><span><b>{tool.item_name}</b><small>{tool.serial_tag || tool.category}</small></span></div>
+          <span className="order-location"><Check size={14} />{tool.tool_condition || 'Good'}</span>
+          <span className="order-techs">Office</span>
+          <button className="button secondary small-button" onClick={() => onCheckout(tool)}><ArrowRight size={14} /> Check out</button>
+        </div>)}
+      </div> : <div className="empty-state">No tools available in office right now.</div>}
+    </section>
+
+    <section className="panel">
+      <div className="panel-heading"><div><h3>My tool history</h3><p>Tools you have used in the past</p></div></div>
       {myCheckouts.length ? <div className="history-list">
         {myCheckouts.slice(0, 20).map((h) => {
-          const tool = myTools.find((t) => t.id === h.tool_id) || inventoryFallback(h.tool_id, myTools);
+          const tool = myTools.find((t) => t.id === h.tool_id);
           return <div className="history-row" key={h.id}>
-            <div className={`history-badge ${h.checked_in_at ? 'in' : 'out'}`}>
-              {h.checked_in_at ? <ArrowDownToLine size={13} /> : <ArrowRight size={13} />}
-            </div>
-            <div className="history-body">
-              <b>{tool?.item_name || 'Tool'}</b>
-              <small>{h.checked_in_at ? `Returned · ${h.condition_in || 'Good'}` : `Checked out${h.work_orders?.client_name ? ' · ' + h.work_orders.client_name : ''}`}</small>
-            </div>
+            <div className={`history-badge ${h.checked_in_at ? 'in' : 'out'}`}>{h.checked_in_at ? <ArrowDownToLine size={13} /> : <ArrowRight size={13} />}</div>
+            <div className="history-body"><b>{tool?.item_name || 'Tool'}</b><small>{h.checked_in_at ? `Returned · ${h.condition_in || 'Good'}` : `Checked out${h.site ? ' · ' + h.site : ''}`}</small></div>
             <span className="history-date">{formatDateTime(h.checked_in_at || h.checked_out_at)}</span>
           </div>;
         })}
@@ -1769,11 +1590,7 @@ function MyToolsView({ myEmployee, myCheckouts, myOpenCheckouts, myTools, orders
     </section>
   </>;
 }
-function inventoryFallback() { return null; }
 
-// ============================================================
-// WORK ORDERS
-// ============================================================
 function WorkOrdersView({ role, orders, search = '', setSearch, category = 'All statuses', setCategory, onAdd, onOpen, compact = false }) {
   const isAdmin = role === 'administrator';
   return <section className="panel"><div className="panel-heading"><div><h3>{compact ? 'Your upcoming assignments' : isAdmin ? 'Work orders & dispatch' : 'Assigned work orders'}</h3><p>{isAdmin ? 'Track progress and assign technicians individually' : 'Only work orders assigned to your account are shown'}</p></div>{isAdmin && !compact && <button className="button primary small-button" onClick={onAdd}><Plus size={15} /> Create work order</button>}</div>{!compact && <div className="filter-row"><div className="search-box"><Search size={17} /><input placeholder="Search client, site, or service…" value={search} onChange={(event) => setSearch(event.target.value)} /></div><label className="select-wrap"><ChevronDown size={15} /><select value={category} onChange={(event) => setCategory(event.target.value)}><option>All statuses</option><option>Pending</option><option>In Progress</option><option>Completed</option></select></label></div>}<div className="order-list">{orders.map((order) => <button key={order.id} className="order-row" onClick={() => onOpen(order)}><div className="order-service"><span className="order-icon"><Wrench size={17} /></span><span><b>{order.client_name}</b><small>{order.service_type}</small></span></div><span className="order-location"><MapPin size={14} />{order.location}</span><span className="order-techs">{order.work_order_assignments?.map((item) => item.employees?.full_name).filter(Boolean).join(', ') || 'Unassigned'}</span><Status status={order.status} /></button>)}{!orders.length && <div className="empty-state">No work orders match this view.</div>}</div></section>;
@@ -1786,24 +1603,14 @@ function TeamScheduleView({ schedule, myOrderIds }) {
   return <section className="panel table-panel"><div className="panel-heading"><div><h3>Team schedule</h3><p>See who is working where and when. Client details are shown only on your own assigned work orders.</p></div></div><div className="table-scroll"><table><thead><tr><th>Date</th><th>Service</th><th>Area</th><th>Technicians</th><th>Status</th></tr></thead><tbody>{schedule.map((job) => <tr key={job.id}><td><b>{job.scheduled_at ? formatDate(job.scheduled_at) : 'Not scheduled'}</b></td><td>{job.service_type}</td><td>{job.location}</td><td>{job.technicians?.length ? job.technicians.join(', ') : 'Unassigned'}</td><td><Status status={job.status} />{mine.has(job.id) && <span className="status-chip neutral" style={{ marginLeft: 6 }}>Yours</span>}</td></tr>)}{!schedule.length && <EmptyRow columns={5} text="No upcoming jobs on the schedule." />}</tbody></table></div></section>;
 }
 
-// ============================================================
-// EMPLOYEES / QUOTATIONS / MISC (unchanged)
-// ============================================================
 function EmployeesView({ employees, search, setSearch, onAdd, onOpen }) {
   return <section className="panel">
-    <div className="panel-heading">
-      <div><h3>Employee directory</h3><p>Company staff and their assigned roles</p></div>
-      <button className="button primary small-button" onClick={onAdd}><Plus size={15} /> Add employee</button>
-    </div>
+    <div className="panel-heading"><div><h3>Employee directory</h3><p>Company staff and their assigned roles</p></div><button className="button primary small-button" onClick={onAdd}><Plus size={15} /> Add employee</button></div>
     <ListSearch value={search} onChange={setSearch} placeholder="Search name, position, email, or phone…" />
     <div className="employee-grid">
       {employees.map((employee) => <button className="employee-card clickable-card" key={employee.id} onClick={() => onOpen(employee)}>
         <Avatar name={employee.full_name} src={employee.avatar_url} />
-        <div className="employee-card-body">
-          <b>{employee.full_name}</b>
-          <span>{employee.job_title}</span>
-          <small>{employee.email || employee.phone || 'Contact details not added'}</small>
-        </div>
+        <div className="employee-card-body"><b>{employee.full_name}</b><span>{employee.job_title}</span><small>{employee.email || employee.phone || 'Contact details not added'}</small></div>
         <span className={`presence ${employee.active ? 'on' : ''}`}>{employee.active ? 'Active' : 'Inactive'}</span>
       </button>)}
       {!employees.length && <div className="empty-state">No matching employees.</div>}
@@ -1814,19 +1621,11 @@ function EmployeesView({ employees, search, setSearch, onAdd, onOpen }) {
 function QuotationsView({ quotations, activeCount, archivedCount, search, setSearch, filter, setFilter, onAdd, onView, onPrint, onArchive, onRestore, onForceDelete }) {
   const isArchived = filter === 'archived';
   return <section className="panel">
-    <div className="panel-heading">
-      <div><h3>Client quotations</h3><p>Itemized service estimates and print for clients</p></div>
-      <button className="button primary small-button" onClick={onAdd}><Plus size={15} /> New quotation</button>
-    </div>
+    <div className="panel-heading"><div><h3>Client quotations</h3><p>Itemized service estimates and print for clients</p></div><button className="button primary small-button" onClick={onAdd}><Plus size={15} /> New quotation</button></div>
     <div className="inventory-filters">
-      <button className={!isArchived ? 'chip active' : 'chip'} onClick={() => setFilter('active')}>
-        Active {activeCount > 0 && <span className="chip-count">{activeCount}</span>}
-      </button>
-      <button className={isArchived ? 'chip active archived-chip' : 'chip archived-chip'} onClick={() => setFilter('archived')}>
-        <Archive size={13} /> Archived {archivedCount > 0 && <span className="chip-count archived-count">{archivedCount}</span>}
-      </button>
+      <button className={!isArchived ? 'chip active' : 'chip'} onClick={() => setFilter('active')}>Active {activeCount > 0 && <span className="chip-count">{activeCount}</span>}</button>
+      <button className={isArchived ? 'chip active archived-chip' : 'chip archived-chip'} onClick={() => setFilter('archived')}><Archive size={13} /> Archived {archivedCount > 0 && <span className="chip-count archived-count">{archivedCount}</span>}</button>
     </div>
-
     {isArchived ? (
       <ArchivedQuotationsList archived={quotations} onRestore={onRestore} onForceDelete={onForceDelete} onOpen={onView} />
     ) : (
@@ -1834,23 +1633,17 @@ function QuotationsView({ quotations, activeCount, archivedCount, search, setSea
         <ListSearch value={search} onChange={setSearch} placeholder="Search client, project, or status…" />
         <div className="quote-grid">
           {quotations.map((quote) => <article className="quote-card" key={quote.id}>
-            <div className="quote-top">
-              <span className="order-icon"><FileText size={18} /></span>
-              <div className="quote-top-chips"><PaymentStatus quote={quote} /></div>
-            </div>
+            <div className="quote-top"><span className="order-icon"><FileText size={18} /></span><div className="quote-top-chips"><PaymentStatus quote={quote} /></div></div>
             <div className="quote-card-body">
               <h4>{quote.client_name}</h4>
               <p className="quote-project">{quote.project_title || quote.service_type}</p>
               <small className="quote-location">{quote.client_address || 'No location set'}</small>
-              <div className="quote-totals">
-                <strong>{money(quoteGrandTotal(quote))}</strong>
-                <small>Paid {money(quote.amount_paid || 0)} · Balance {money(quoteBalance(quote))}</small>
-              </div>
+              <div className="quote-totals"><strong>{money(quoteGrandTotal(quote))}</strong><small>Paid {money(quote.amount_paid || 0)} · Balance {money(quoteBalance(quote))}</small></div>
             </div>
             <div className="quote-actions">
               <button className="button secondary small-button" onClick={() => onView(quote)}><Eye size={15} /> View</button>
               <button className="button secondary small-button" onClick={() => onPrint(quote)}><Printer size={15} /> Print</button>
-              <button className="button danger small-button" onClick={() => onArchive(quote)} title="Archive"><Archive size={15} /> Archive</button>
+              <button className="button danger small-button" onClick={() => onArchive(quote)}><Archive size={15} /> Archive</button>
             </div>
           </article>)}
           {!quotations.length && <div className="empty-state">No matching quotations.</div>}
@@ -1861,23 +1654,12 @@ function QuotationsView({ quotations, activeCount, archivedCount, search, setSea
 }
 
 function ArchivedQuotationsList({ archived, onRestore, onForceDelete, onOpen }) {
-  if (!archived.length) {
-    return <>
-      <div className="archived-banner">
-        <Archive size={15} />
-        <span>Archived quotations are hidden from the active list but their records are preserved.</span>
-      </div>
-      <div className="empty-state archived-empty">
-        <Archive size={40} strokeWidth={1.5} />
-        <p><b>No archived quotations yet.</b></p>
-      </div>
-    </>;
-  }
+  if (!archived.length) return <>
+    <div className="archived-banner"><Archive size={15} /><span>Archived quotations are hidden from the active list but their records are preserved.</span></div>
+    <div className="empty-state archived-empty"><Archive size={40} strokeWidth={1.5} /><p><b>No archived quotations yet.</b></p></div>
+  </>;
   return <>
-    <div className="archived-banner">
-      <Archive size={15} />
-      <span>{archived.length} archived quotation{archived.length === 1 ? '' : 's'}.</span>
-    </div>
+    <div className="archived-banner"><Archive size={15} /><span>{archived.length} archived quotation{archived.length === 1 ? '' : 's'}.</span></div>
     <div className="table-scroll"><table>
       <thead><tr><th>Client</th><th>Project</th><th>Total</th><th>Payment</th><th>Archived</th><th>Actions</th></tr></thead>
       <tbody>
@@ -1887,12 +1669,10 @@ function ArchivedQuotationsList({ archived, onRestore, onForceDelete, onOpen }) 
           <td><span className="qty-value">{money(quoteGrandTotal(quote))}</span></td>
           <td><PaymentStatus quote={quote} /></td>
           <td><small className="archived-date">{quote.archived_at ? formatDateTime(quote.archived_at) : 'Unknown'}</small></td>
-          <td>
-            <div className="row-actions">
-              <button className="button danger subtle small-button" onClick={(event) => { event.stopPropagation(); onForceDelete(quote); }}><Trash2 size={14} /> Delete</button>
-              <button className="button primary small-button" onClick={(event) => { event.stopPropagation(); onRestore(quote); }}><RotateCcw size={14} /> Restore</button>
-            </div>
-          </td>
+          <td><div className="row-actions">
+            <button className="button danger subtle small-button" onClick={(event) => { event.stopPropagation(); onForceDelete(quote); }}><Trash2 size={14} /> Delete</button>
+            <button className="button primary small-button" onClick={(event) => { event.stopPropagation(); onRestore(quote); }}><RotateCcw size={14} /> Restore</button>
+          </div></td>
         </tr>)}
       </tbody>
     </table></div>
@@ -1907,11 +1687,7 @@ function QuotePreviewModal({ quote, onClose, onPrint, onRecordPayment, onArchive
     <header className="modal-header">
       <h2>Ready to print</h2>
       <div className="modal-header-actions">
-        {quote.archived ? (
-          <button className="button danger subtle small-button" onClick={() => onForceDelete(quote)}><Trash2 size={15} /> Permanently delete</button>
-        ) : (
-          <button className="button danger small-button" onClick={() => onArchive(quote)}><Archive size={15} /> Archive</button>
-        )}
+        {quote.archived ? <button className="button danger subtle small-button" onClick={() => onForceDelete(quote)}><Trash2 size={15} /> Permanently delete</button> : <button className="button danger small-button" onClick={() => onArchive(quote)}><Archive size={15} /> Archive</button>}
         <button className="button secondary small-button" onClick={() => onRecordPayment(quote)}><Wallet size={15} /> Record payment</button>
         <button className="button primary small-button" onClick={onPrint}><Printer size={15} /> Print</button>
         <button className="icon-button" onClick={onClose}><X size={19} /></button>
@@ -1923,9 +1699,7 @@ function QuotePreviewModal({ quote, onClose, onPrint, onRecordPayment, onArchive
       <div className="payment-summary-item"><span>Balance</span><b className={balance > 0 ? 'balance-due' : 'balance-clear'}>{money(balance)}</b></div>
       <div className="payment-summary-status"><PaymentStatus quote={quote} /></div>
     </div>
-    <div className="quote-preview-scroll">
-      <PrintableQuotation quote={quote} inline />
-    </div>
+    <div className="quote-preview-scroll"><PrintableQuotation quote={quote} inline /></div>
   </section></div>;
 }
 
@@ -1938,14 +1712,12 @@ function HardwareBuilder({ rows, onAdd, onUpdate, onRemove }) {
   return <div className="field full hardware-builder">
     <span>Required hardware</span>
     <div className="hardware-rows">
-      {rows.map((row, index) => (
-        <div className="hardware-row" key={index}>
-          <input className="hardware-item" placeholder="Item name (e.g. CCTV Camera)" value={row.item_name} onChange={(e) => onUpdate(index, 'item_name', e.target.value)} />
-          <input className="hardware-qty" type="number" min="1" placeholder="Qty" value={row.quantity} onChange={(e) => onUpdate(index, 'quantity', e.target.value)} />
-          <input className="hardware-unit" placeholder="Unit" value={row.unit} onChange={(e) => onUpdate(index, 'unit', e.target.value)} />
-          <button type="button" className="icon-button danger" onClick={() => onRemove(index)} disabled={rows.length === 1}><X size={16} /></button>
-        </div>
-      ))}
+      {rows.map((row, index) => <div className="hardware-row" key={index}>
+        <input className="hardware-item" placeholder="Item name (e.g. CCTV Camera)" value={row.item_name} onChange={(e) => onUpdate(index, 'item_name', e.target.value)} />
+        <input className="hardware-qty" type="number" min="1" placeholder="Qty" value={row.quantity} onChange={(e) => onUpdate(index, 'quantity', e.target.value)} />
+        <input className="hardware-unit" placeholder="Unit" value={row.unit} onChange={(e) => onUpdate(index, 'unit', e.target.value)} />
+        <button type="button" className="icon-button danger" onClick={() => onRemove(index)} disabled={rows.length === 1}><X size={16} /></button>
+      </div>)}
     </div>
     <button type="button" className="button secondary small-button add-row-button" onClick={onAdd}><Plus size={15} /> Add hardware item</button>
   </div>;
@@ -1962,17 +1734,9 @@ function PrintableQuotation({ quote, inline = false }) {
   const projectDate = quote.quote_date || quote.created_at;
 
   return <article className={inline ? 'printable-quotation inline' : 'printable-quotation'}>
-    <div className="print-brand">
-      {COMPANY.name}
-      <span>{COMPANY.address}</span>
-      <span>{COMPANY.phone}</span>
-      <span>{COMPANY.email}</span>
-    </div>
+    <div className="print-brand">{COMPANY.name}<span>{COMPANY.address}</span><span>{COMPANY.phone}</span><span>{COMPANY.email}</span></div>
     <div className="print-header-row">
-      <div className="print-meta">
-        <p><b>LOCATION:</b> {quote.client_address || 'N/A'}</p>
-        <p><b>PROJECT:</b> {quote.project_title || quote.service_type || 'N/A'}</p>
-      </div>
+      <div className="print-meta"><p><b>LOCATION:</b> {quote.client_address || 'N/A'}</p><p><b>PROJECT:</b> {quote.project_title || quote.service_type || 'N/A'}</p></div>
       <div className="print-date">{formatDate(projectDate)}</div>
     </div>
     <table className="print-table">
@@ -1992,11 +1756,7 @@ function PrintableQuotation({ quote, inline = false }) {
         <tr className="print-total-row highlight"><td colSpan="5" className="print-total-label">BALANCE DUE</td><td className="col-cost">{money(balance)}</td></tr>
       </tbody>
     </table>
-    <div className="print-payment-status">
-      <b>Payment status:</b> {paymentStatus}
-      {quote.payment_date ? ` · Last payment received on ${formatDate(quote.payment_date)}` : ''}
-      {quote.payment_method ? ` via ${quote.payment_method}` : ''}
-    </div>
+    <div className="print-payment-status"><b>Payment status:</b> {paymentStatus}{quote.payment_date ? ` · Last payment received on ${formatDate(quote.payment_date)}` : ''}{quote.payment_method ? ` via ${quote.payment_method}` : ''}</div>
     {quote.notes && <p className="print-notes">{quote.notes}</p>}
     <div className="print-signatures">
       <div className="print-sig"><small className="print-sig-label">CHECKED BY</small><span className="print-sig-name"><b>{COMPANY.checkedBy}</b></span><span className="print-sig-title">{COMPANY.checkedByTitle}</span></div>
@@ -2045,15 +1805,9 @@ function SupplierField({ customSupplier, setCustomSupplier, defaultValue = '' })
     {usingDefault ? (
       <div className="supplier-default">
         <input type="hidden" name="supplier" value={DEFAULT_SUPPLIER} />
-        <span className="supplier-chip">
-          <BriefcaseBusiness size={14} />
-          {DEFAULT_SUPPLIER}
-          <button type="button" className="supplier-chip-x" title="Use a different supplier" onClick={() => setCustomSupplier(true)}><X size={13} /></button>
-        </span>
+        <span className="supplier-chip"><BriefcaseBusiness size={14} />{DEFAULT_SUPPLIER}<button type="button" className="supplier-chip-x" title="Use a different supplier" onClick={() => setCustomSupplier(true)}><X size={13} /></button></span>
       </div>
-    ) : (
-      <input name="supplier" placeholder="Enter supplier name" defaultValue={defaultValue && defaultValue !== DEFAULT_SUPPLIER ? defaultValue : ''} autoFocus />
-    )}
+    ) : <input name="supplier" placeholder="Enter supplier name" defaultValue={defaultValue && defaultValue !== DEFAULT_SUPPLIER ? defaultValue : ''} autoFocus />}
   </div>;
 }
 
@@ -2072,11 +1826,7 @@ function AdjustStockForm({ item, onAdjust, onCancel }) {
   const threshold = Number(item.reorder_level ?? 1);
   const willBeLow = mode === 'remove' && projected <= threshold;
 
-  const requestConfirm = (event) => {
-    event.preventDefault();
-    if (invalid || tooMany) return;
-    setConfirming(true);
-  };
+  const requestConfirm = (event) => { event.preventDefault(); if (invalid || tooMany) return; setConfirming(true); };
   const commit = () => { onAdjust(item, delta, note || (mode === 'remove' ? `Used ${parsed}` : `Added ${parsed}`)); };
 
   if (confirming) {
@@ -2089,7 +1839,7 @@ function AdjustStockForm({ item, onAdjust, onCancel }) {
           <small>{mode === 'remove' ? `Using ${parsed}` : `Adding ${parsed}`}{note ? ` · "${note}"` : ''}</small>
         </div>
       </div>
-      {willBeLow && <div className="low-stock-inline-warning"><AlertTriangle size={16} /><div><b>This will drop the item to low stock</b><small>After saving, "{item.item_name}" will be at {projected} {unitLabel}, which is at or below its reorder threshold of {threshold}.</small></div></div>}
+      {willBeLow && <div className="low-stock-inline-warning"><AlertTriangle size={16} /><div><b>This will drop the item to low stock</b><small>After saving, "{item.item_name}" will be at {projected} {unitLabel}.</small></div></div>}
       <div className="form-actions full"><button type="button" className="button secondary" onClick={() => setConfirming(false)}>Back</button><button type="button" className="button primary" onClick={commit}><Check size={16} /> Confirm & save</button></div>
     </div>;
   }
@@ -2107,7 +1857,7 @@ function AdjustStockForm({ item, onAdjust, onCancel }) {
       <span>{mode === 'remove' ? 'How many used?' : 'How many added?'}</span>
       <input type="number" min="1" required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={mode === 'remove' ? 'e.g. 4' : 'e.g. 10'} autoFocus />
       {tooMany && <small className="field-error">Only {current} {unitLabel} available.</small>}
-      {!invalid && !tooMany && <small className="live-preview">New total will be <b>{projected} {unitLabel}</b> {mode === 'remove' ? ' (minus ' : ' (plus '}{parsed}{')'}</small>}
+      {!invalid && !tooMany && <small className="live-preview">New total will be <b>{projected} {unitLabel}</b></small>}
     </label>
     <label className="field full"><span>Note (optional)</span><input placeholder="e.g. Used on Reyes residence install" value={note} onChange={(e) => setNote(e.target.value)} /></label>
     <div className="form-actions full"><button type="button" className="button secondary" onClick={onCancel}>Cancel</button><button className="button primary" disabled={invalid || tooMany}><ArrowRight size={16} /> Review & confirm</button></div>
@@ -2143,19 +1893,10 @@ function FormActions({ onCancel }) { return <div className="form-actions full"><
 function EmptyRow({ columns, text }) { return <tr><td colSpan={columns} className="empty-cell">{text}</td></tr>; }
 
 function AllHistoryView({ inventory, transactions }) {
-  const itemById = useMemo(() => {
-    const map = new Map();
-    inventory.forEach((item) => map.set(item.id, item));
-    return map;
-  }, [inventory]);
-
+  const itemById = useMemo(() => { const map = new Map(); inventory.forEach((item) => map.set(item.id, item)); return map; }, [inventory]);
   const sorted = useMemo(() => [...transactions].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)), [transactions]);
-
   return <div className="all-history-wrap">
-    <div className="all-history-header">
-      <b>Complete stock history</b>
-      <small>{sorted.length} movement{sorted.length === 1 ? '' : 's'} across all items</small>
-    </div>
+    <div className="all-history-header"><b>Complete stock history</b><small>{sorted.length} movement{sorted.length === 1 ? '' : 's'} across all items</small></div>
     <div className="table-scroll"><table>
       <thead><tr><th>When</th><th>Item</th><th>Change</th><th>Note</th></tr></thead>
       <tbody>
@@ -2179,15 +1920,11 @@ function ArchivedListView({ archived, onRestore, onRestoreAll, onOpen }) {
   if (!archived.length) {
     return <>
       <div className="archived-banner"><Archive size={15} /><span>Archived materials are hidden from the main inventory but their stock history is preserved.</span></div>
-      <div className="empty-state archived-empty"><Archive size={40} strokeWidth={1.5} /><p><b>No archived materials yet.</b></p><small>Items you archive will appear here.</small></div>
+      <div className="empty-state archived-empty"><Archive size={40} strokeWidth={1.5} /><p><b>No archived materials yet.</b></p></div>
     </>;
   }
   return <>
-    <div className="archived-banner">
-      <Archive size={15} />
-      <span>{archived.length} archived material{archived.length === 1 ? '' : 's'}.</span>
-      <button className="button secondary small-button archived-restore-all" onClick={onRestoreAll}><RotateCcw size={14} /> Restore all</button>
-    </div>
+    <div className="archived-banner"><Archive size={15} /><span>{archived.length} archived material{archived.length === 1 ? '' : 's'}.</span><button className="button secondary small-button archived-restore-all" onClick={onRestoreAll}><RotateCcw size={14} /> Restore all</button></div>
     <div className="table-scroll"><table>
       <thead><tr><th>Item</th><th>Type</th><th>On hand</th><th>Archived</th><th>Actions</th></tr></thead>
       <tbody>
