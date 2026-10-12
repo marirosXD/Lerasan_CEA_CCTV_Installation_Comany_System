@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import {
-  Activity, Archive, ArrowDownToLine, ArrowRight, BadgeCheck, BriefcaseBusiness, CalendarDays,
+  Activity, AlertTriangle, Archive, ArrowDownToLine, ArrowRight, BadgeCheck, BriefcaseBusiness, CalendarDays,
   Check, ChevronDown, ClipboardList, Eye, EyeOff, FileText, HardHat, KeyRound, LayoutDashboard,
   LockKeyhole, LogOut, Mail, MailPlus, MapPin, Minus, Package, Plus, Printer, RotateCcw, Search,
   Settings, ShieldCheck, Trash2, Users, Wrench, X,
@@ -98,6 +98,7 @@ function App() {
   const [hardwareRows, setHardwareRows] = useState([{ item_name: '', quantity: 1, unit: 'pcs' }]);
   const [customSupplier, setCustomSupplier] = useState(false);
   const [quoteRows, setQuoteRows] = useState([{ description: '', quantity: 1, unit: 'pcs', unit_cost: 0 }]);
+  const [lowStockDismissed, setLowStockDismissed] = useState(false);
 
   const role = profile?.role;
   const displayName = profile?.full_name || session?.user?.email || 'Account';
@@ -325,6 +326,11 @@ function App() {
     if (error) { setMessage(error.message); return; }
     setModal(null);
     await loadWorkspace();
+    const projected = Math.max(0, Number(item.stock_qty || 0) + delta);
+    const threshold = Number(item.reorder_level ?? 1);
+    if (delta < 0 && projected <= threshold) {
+      setMessage(`Heads up: "${item.item_name}" is now at ${projected} ${String(item.unit || 'pcs').trim()}, which is at or below its reorder threshold of ${threshold}. Consider restocking.`);
+    }
   }
   async function createWorkOrder(event) {
     event.preventDefault();
@@ -563,6 +569,7 @@ function App() {
   }), [category, search, visibleOrders]);
   const activeInventory = useMemo(() => inventory.filter((item) => !item.archived), [inventory]);
   const archivedInventory = useMemo(() => inventory.filter((item) => item.archived), [inventory]);
+  const lowStockItems = useMemo(() => activeInventory.filter((item) => Number(item.stock_qty) <= Number(item.reorder_level ?? 1)), [activeInventory]);
   const filteredInventory = useMemo(() => activeInventory.filter((item) => {
     const matches = `${item.item_name} ${item.category} ${item.supplier || ''}`.toLowerCase().includes(inventorySearch.toLowerCase());
     const low = Number(item.stock_qty) <= Number(item.reorder_level ?? 1);
@@ -582,8 +589,8 @@ function App() {
     onRoleChange={(nextRole) => { setLoginRole(nextRole); setLoginEmail(roleEmails[nextRole]); }}
     onForgotPassword={sendSignInLink}
   />;
-  if (!role && profileLoading) return <main className="login-shell"><section className="login-card"><Brand subtitle="CEA CCTV Installation Services • Tugbok, Davao City" /><p>Loading your account…</p></section><div className="login-background" /></main>;
-  if (!role) return <main className="login-shell"><section className="login-card"><Brand subtitle="CEA CCTV Installation Services • Tugbok, Davao City" /><h2>Account role not assigned</h2><p>Your sign-in is active, but this user has no matching row in <b>public.profiles</b>. Add a profile row with this account’s Auth user ID and role, then sign in again.</p>{message && <Notice>{message}</Notice>}<button className="button secondary full" onClick={signOut}><LogOut size={16} /> Sign out</button></section><div className="login-background" /></main>;
+  if (!role && profileLoading) return <main className="login-shell"><section className="login-card"><Brand subtitle="CCTV Installation Services · Davao City" /><p>Loading your account…</p></section><div className="login-background" /></main>;
+  if (!role) return <main className="login-shell"><section className="login-card"><Brand subtitle="CCTV Installation Services · Davao City" /><h2>Account role not assigned</h2><p>Your sign-in is active, but this user has no matching row in <b>public.profiles</b>. Add a profile row with this account’s Auth user ID and role, then sign in again.</p>{message && <Notice>{message}</Notice>}<button className="button secondary full" onClick={signOut}><LogOut size={16} /> Sign out</button></section><div className="login-background" /></main>;
 
   const tabs = tabsByRole[role] || tabsByRole.field_technician;
   const title = tabs.find(([key]) => key === tab)?.[1] || 'Overview';
@@ -600,25 +607,49 @@ function App() {
         <header className="topbar"><div><div className="eyebrow">CEA CCTV INSTALLATION SERVICES</div><h1>{title}</h1></div><div className="topbar-right"><span className="live-indicator"><i /> Supabase connected</span><Avatar name={displayName} src={profile?.avatar_url} small /></div></header>
         {message && <Notice onClose={() => setMessage('')}>{message}</Notice>}
         {busy && <div className="loading-line">Syncing records…</div>}
-        {tab === 'dashboard' && <Dashboard role={role} profile={profile} orders={visibleOrders} inventory={activeInventory} employees={employees} setTab={setTab} />}
-        {tab === 'inventory' && <InventoryView
-          inventory={filteredInventory}
-          archived={archivedInventory}
-          allInventory={activeInventory}
-          transactions={transactions}
-          search={inventorySearch} setSearch={setInventorySearch}
-          filter={inventoryFilter} setFilter={setInventoryFilter}
-          onAdd={() => { setCustomSupplier(false); setModal({ type: 'inventory' }); }}
-          onReceiveAll={() => setModal({ type: 'receive' })}
-          onReceive={(item) => setModal({ type: 'receive', item })}
-          onOpen={(item) => setModal({ type: 'inventory-details', item })}
-          onAdjust={(item) => setModal({ type: 'adjust-stock', item })}
-          onHistory={(item) => setModal({ type: 'stock-history', item })}
-          onRestore={restoreInventory}
-          onRestoreAll={restoreAllArchived}
-          onForceDelete={forceDeleteInventory}
-          onViewHistoryPage={() => setInventoryFilter('history')}
+        {tab === 'dashboard' && <Dashboard
+          role={role}
+          profile={profile}
+          orders={visibleOrders}
+          inventory={activeInventory}
+          employees={employees}
+          lowStockItems={lowStockItems}
+          setTab={setTab}
+          onViewLowStock={() => { setInventoryFilter('low'); setTab('inventory'); }}
         />}
+        {tab === 'inventory' && <>
+          {lowStockItems.length > 0 && !lowStockDismissed && (
+            <div className="low-stock-alert">
+              <div className="low-stock-alert-icon"><AlertTriangle size={20} /></div>
+              <div className="low-stock-alert-body">
+                <b>{lowStockItems.length} item{lowStockItems.length === 1 ? '' : 's'} running low on stock</b>
+                <small>{lowStockItems.slice(0, 3).map((i) => i.item_name).join(' · ')}{lowStockItems.length > 3 ? ` · +${lowStockItems.length - 3} more` : ''}</small>
+              </div>
+              <button className="button secondary small-button" onClick={() => { setInventoryFilter('low'); setLowStockDismissed(true); }}>
+                View low stock
+              </button>
+              <button className="icon-button" title="Dismiss" onClick={() => setLowStockDismissed(true)}><X size={16} /></button>
+            </div>
+          )}
+          <InventoryView
+            inventory={filteredInventory}
+            archived={archivedInventory}
+            allInventory={activeInventory}
+            transactions={transactions}
+            search={inventorySearch} setSearch={setInventorySearch}
+            filter={inventoryFilter} setFilter={setInventoryFilter}
+            onAdd={() => { setCustomSupplier(false); setModal({ type: 'inventory' }); }}
+            onReceiveAll={() => setModal({ type: 'receive' })}
+            onReceive={(item) => setModal({ type: 'receive', item })}
+            onOpen={(item) => setModal({ type: 'inventory-details', item })}
+            onAdjust={(item) => setModal({ type: 'adjust-stock', item })}
+            onHistory={(item) => setModal({ type: 'stock-history', item })}
+            onRestore={restoreInventory}
+            onRestoreAll={restoreAllArchived}
+            onForceDelete={forceDeleteInventory}
+            onViewHistoryPage={() => setInventoryFilter('history')}
+          />
+        </>}
         {tab === 'schedule' && <TeamScheduleView schedule={teamSchedule} myOrderIds={visibleOrders.map((order) => order.id)} />}
         {tab === 'workorders' && <WorkOrdersView role={role} orders={filteredOrders} search={search} setSearch={setSearch} category={category} setCategory={setCategory} onAdd={() => { resetHardwareRows(); setModal({ type: 'workorder' }); }} onOpen={setSelectedOrder} />}
         {tab === 'employees' && <EmployeesView
@@ -689,13 +720,26 @@ function App() {
           <Detail label="Price per unit" value={money(modal.item.unit_cost)} icon={FileText} />
           <Detail label="Supplier" value={modal.item.supplier || 'Not recorded'} icon={BriefcaseBusiness} />
           <Detail label="Warn when it drops to" value={formatQty(modal.item.reorder_level ?? 1, modal.item.unit)} icon={Activity} />
-          {role === 'administrator' && <div className="form-actions inventory-detail-actions">
-            <button className="button danger" onClick={() => archiveInventory(modal.item)}><Archive size={16} /> Archive</button>
-            <button className="button danger subtle" onClick={() => forceDeleteInventory(modal.item)} title="Permanently delete item and all its history"><Trash2 size={16} /> Force delete</button>
-            <button className="button secondary" onClick={() => setModal({ type: 'adjust-stock', item: modal.item })}><ArrowDownToLine size={16} /> Adjust stock</button>
-            <button className="button secondary" onClick={() => setModal({ type: 'stock-history', item: modal.item })}><ClipboardList size={16} /> History</button>
-            <button className="button primary" onClick={() => { setCustomSupplier(false); setModal({ type: 'edit-inventory', item: modal.item }); }}>Edit item</button>
-          </div>}
+          {Number(modal.item.stock_qty) <= Number(modal.item.reorder_level ?? 1) && (
+            <div className="detail-block detail-low-stock">
+              <AlertTriangle size={15} />
+              <div>
+                <b>Low stock</b>
+                <small>This item is at or below its reorder threshold. Consider restocking soon.</small>
+              </div>
+            </div>
+          )}
+          {role === 'administrator' && <>
+            <div className="form-actions inventory-detail-actions primary-actions">
+              <button className="button secondary" onClick={() => setModal({ type: 'adjust-stock', item: modal.item })}><ArrowDownToLine size={16} /> Adjust stock</button>
+              <button className="button secondary" onClick={() => setModal({ type: 'stock-history', item: modal.item })}><ClipboardList size={16} /> History</button>
+              <button className="button primary" onClick={() => { setCustomSupplier(false); setModal({ type: 'edit-inventory', item: modal.item }); }}>Edit item</button>
+            </div>
+            <div className="form-actions inventory-detail-actions destructive-actions">
+              <button className="button danger subtle" onClick={() => forceDeleteInventory(modal.item)} title="Permanently delete item and all its history"><Trash2 size={16} /> Force delete</button>
+              <button className="button danger" onClick={() => archiveInventory(modal.item)}><Archive size={16} /> Archive</button>
+            </div>
+          </>}
         </div>}
 
         {modal.type === 'archived-details' && <div className="record-details">
@@ -851,7 +895,7 @@ function Brand({ compact = false, subtitle = 'Operations platform' }) {
 function Avatar({ name, src, small = false, large = false }) { return src ? <img className={`avatar avatar-photo${small ? ' small' : ''}${large ? ' large' : ''}`} src={src} alt={`${name} profile`} /> : <div className={`avatar${small ? ' small' : ''}${large ? ' large' : ''}`}>{initials(name)}</div>; }
 function Notice({ children, onClose }) { return <div className="notice">{children}{onClose && <button onClick={onClose} className="icon-button"><X size={15} /></button>}</div>; }
 function ConfigErrorScreen() {
-  return <main className="login-shell"><section className="login-card"><Brand subtitle="CEA CCTV Installation Services • Tugbok, Davao City" /><div className="login-heading"><h1>Supabase configuration required</h1><p>Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your deployment environment before opening the app.</p></div><Notice>Missing Supabase environment variables. The app will not connect with hardcoded fallback keys.</Notice></section><div className="login-background" /></main>;
+  return <main className="login-shell"><section className="login-card"><Brand subtitle="CCTV Installation Services · Davao City" /><div className="login-heading"><h1>Supabase configuration required</h1><p>Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your deployment environment before opening the app.</p></div><Notice>Missing Supabase environment variables. The app will not connect with hardcoded fallback keys.</Notice></section><div className="login-background" /></main>;
 }
 
 function LoginScreen({ onSubmit, busy, message, role, email, onEmailChange, onRoleChange, onForgotPassword }) {
@@ -861,7 +905,7 @@ function LoginScreen({ onSubmit, busy, message, role, email, onEmailChange, onRo
 
   if (forgotMode) {
     return <main className="login-shell"><section className="login-card">
-      <Brand subtitle="CEA CCTV Installation Services • Tugbok, Davao City" />
+      <Brand subtitle="CCTV Installation Services · Davao City" />
       <div className="login-heading">
         <h1>Forgot password?</h1>
         <p>Enter your email and we'll send a reset link.</p>
@@ -879,7 +923,7 @@ function LoginScreen({ onSubmit, busy, message, role, email, onEmailChange, onRo
   }
 
   return <main className="login-shell"><section className="login-card">
-    <Brand subtitle="CEA CCTV Installation Services • Tugbok, Davao City" />
+    <Brand subtitle="CCTV Installation Services · Davao City" />
     {message && <Notice>{message}</Notice>}
     <div className="role-quick">
       <label>Select access role</label>
@@ -897,12 +941,12 @@ function LoginScreen({ onSubmit, busy, message, role, email, onEmailChange, onRo
   </section><div className="login-background" /></main>;
 }
 
-function Dashboard({ role, profile, orders, inventory, employees, setTab }) {
+function Dashboard({ role, profile, orders, inventory, employees, lowStockItems, setTab, onViewLowStock }) {
   const pending = orders.filter((order) => order.status === 'Pending').length;
   const active = orders.filter((order) => order.status === 'In Progress').length;
   const completed = orders.filter((order) => order.status === 'Completed').length;
   if (role === 'field_technician') return <><div className="welcome-row"><div><div className="eyebrow">FIELD OPERATIONS</div><h2>Your assigned work</h2><p>Installation schedules, site addresses, and required hardware.</p></div><button className="button primary" onClick={() => setTab('workorders')}><ClipboardList size={17} /> View assignments</button></div><div className="stats-grid three"><Stat label="Assigned jobs" value={orders.length} icon={BriefcaseBusiness} /><Stat label="In progress" value={active} icon={Wrench} tone="amber" /><Stat label="Completed" value={completed} icon={BadgeCheck} tone="green" /></div><WorkOrdersView role={role} orders={orders.slice(0, 4)} compact onOpen={() => setTab('workorders')} /></>;
-  return <><div className="welcome-row"><div><div className="eyebrow">ADMINISTRATOR OVERVIEW</div><h2>Good day, {profile?.full_name?.split(' ')[0] || 'Administrator'}</h2><p>Here’s the current status of your operations.</p></div><button className="button primary" onClick={() => setTab('workorders')}><Plus size={17} /> New work order</button></div><div className="stats-grid four"><Stat label="Pending" value={pending} icon={CalendarDays} /><Stat label="In progress" value={active} icon={Activity} tone="amber" /><Stat label="Completed" value={completed} icon={BadgeCheck} tone="green" /><Stat label="Inventory items" value={inventory.length} icon={Package} /></div><div className="dashboard-grid"><section className="panel"><div className="panel-heading"><div><h3>Recent work orders</h3><p>Latest projects across all statuses</p></div><button className="text-button" onClick={() => setTab('workorders')}>View all <ArrowRight size={15} /></button></div><OrderList orders={orders.slice(0, 5)} onOpen={() => setTab('workorders')} /></section><section className="panel quick-panel"><div className="panel-heading"><div><h3>Quick access</h3><p>Common administrator tasks</p></div></div><QuickLink icon={ClipboardList} title="Manage work orders" subtitle={`${orders.length} project records`} onClick={() => setTab('workorders')} /><QuickLink icon={Package} title="Inventory tracking" subtitle={`${inventory.length} items`} onClick={() => setTab('inventory')} /><QuickLink icon={Users} title="Employee directory" subtitle={`${employees.length} employees`} onClick={() => setTab('employees')} /><QuickLink icon={FileText} title="Client quotations" subtitle="Create and print quotations" onClick={() => setTab('quotations')} /></section></div></>;
+  return <><div className="welcome-row"><div><div className="eyebrow">ADMINISTRATOR OVERVIEW</div><h2>Good day, {profile?.full_name?.split(' ')[0] || 'Administrator'}</h2><p>Here’s the current status of your operations.</p></div><button className="button primary" onClick={() => setTab('workorders')}><Plus size={17} /> New work order</button></div><div className="stats-grid four"><Stat label="Pending" value={pending} icon={CalendarDays} /><Stat label="In progress" value={active} icon={Activity} tone="amber" /><Stat label="Completed" value={completed} icon={BadgeCheck} tone="green" /><Stat label="Inventory items" value={inventory.length} icon={Package} /></div>{lowStockItems.length > 0 && <button className="dashboard-low-stock-banner" onClick={onViewLowStock}><div className="low-stock-alert-icon small"><AlertTriangle size={18} /></div><div className="dashboard-low-stock-body"><b>{lowStockItems.length} item{lowStockItems.length === 1 ? '' : 's'} need restocking</b><small>{lowStockItems.slice(0, 4).map((i) => i.item_name).join(' · ')}{lowStockItems.length > 4 ? ` · +${lowStockItems.length - 4} more` : ''}</small></div><ArrowRight size={16} /></button>}<div className="dashboard-grid"><section className="panel"><div className="panel-heading"><div><h3>Recent work orders</h3><p>Latest projects across all statuses</p></div><button className="text-button" onClick={() => setTab('workorders')}>View all <ArrowRight size={15} /></button></div><OrderList orders={orders.slice(0, 5)} onOpen={() => setTab('workorders')} /></section><section className="panel quick-panel"><div className="panel-heading"><div><h3>Quick access</h3><p>Common administrator tasks</p></div></div><QuickLink icon={ClipboardList} title="Manage work orders" subtitle={`${orders.length} project records`} onClick={() => setTab('workorders')} /><QuickLink icon={Package} title="Inventory tracking" subtitle={`${inventory.length} items`} onClick={() => setTab('inventory')} /><QuickLink icon={Users} title="Employee directory" subtitle={`${employees.length} employees`} onClick={() => setTab('employees')} /><QuickLink icon={FileText} title="Client quotations" subtitle="Create and print quotations" onClick={() => setTab('quotations')} /></section></div></>;
 }
 function Stat({ label, value, icon: Icon, tone = 'blue' }) { return <div className="stat-card"><div className={`stat-icon ${tone}`}><Icon size={19} /></div><div><span>{label}</span><strong>{value}</strong></div></div>; }
 function QuickLink({ icon: Icon, title, subtitle, onClick }) { return <button className="quick-link" onClick={onClick}><span className="quick-icon"><Icon size={18} /></span><span><b>{title}</b><small>{subtitle}</small></span><ArrowRight size={16} /></button>; }
@@ -1320,6 +1364,8 @@ function AdjustStockForm({ item, onAdjust, onCancel }) {
   const tooMany = mode === 'remove' && parsed > current;
   const delta = mode === 'remove' ? -parsed : parsed;
   const unitLabel = String(item.unit || 'pcs').trim();
+  const threshold = Number(item.reorder_level ?? 1);
+  const willBeLow = mode === 'remove' && projected <= threshold;
 
   const requestConfirm = (event) => {
     event.preventDefault();
@@ -1345,6 +1391,15 @@ function AdjustStockForm({ item, onAdjust, onCancel }) {
           <small>{mode === 'remove' ? `Using ${parsed}` : `Adding ${parsed}`}{note ? ` · "${note}"` : ''}</small>
         </div>
       </div>
+      {willBeLow && (
+        <div className="low-stock-inline-warning">
+          <AlertTriangle size={16} />
+          <div>
+            <b>This will drop the item to low stock</b>
+            <small>After saving, "{item.item_name}" will be at {projected} {unitLabel}, which is at or below its reorder threshold of {threshold}.</small>
+          </div>
+        </div>
+      )}
       <div className="form-actions full">
         <button type="button" className="button secondary" onClick={() => setConfirming(false)}>Back</button>
         <button type="button" className="button primary" onClick={commit}><Check size={16} /> Confirm & save</button>
