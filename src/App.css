@@ -535,7 +535,21 @@ td .button.small-button{white-space:nowrap}
 .chip.archived-chip.active .archived-count{background:rgba(255,255,255,.28);color:#fff}
 
 /* Archived banner at top of the archived list */
-.archived-banner{display:flex;align-items:center;gap:10px;padding:14px 20px;background:#fff7e6;border-top:1px solid #f1dda9;border-bottom:1px solid #f1dda9;color:#78591b;font-size:13.5px;line-height:1.5;flex-wrap:wrap}
+.archived-banner{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:14px 20px;
+  margin-top:16px;
+  background:#fff7e6;
+  border-top:1px solid #f1dda9;
+  border-bottom:1px solid #f1dda9;
+  border-radius:9px;
+  color:#78591b;
+  font-size:13.5px;
+  line-height:1.5;
+  flex-wrap:wrap;
+}
 .archived-banner > svg{flex:none;color:#a57719}
 .archived-banner > span{flex:1;min-width:200px}
 .archived-restore-all{flex:none;background:#fff;border-color:#f1dda9;color:#78591b;font-weight:700}
@@ -560,4 +574,41 @@ td .button.small-button{white-space:nowrap}
   .archived-banner{padding:12px 14px;font-size:12.5px}
   .archived-restore-all{width:100%;justify-content:center}
   .empty-state.archived-empty{padding:40px 16px}
+}
+
+/* ============================================================ */
+/* ARCHIVE vs FORCE DELETE — visual distinction                 */
+/* ============================================================ */
+
+/* Archive: softer, brown-ish — visually distinct from destructive actions */
+.inventory-detail-actions .button.danger:not(.subtle){
+  background:#fff7e6;
+  border-color:#f1dda9;
+  color:#78591b;
+  font-weight:700;
+}
+.inventory-detail-actions .button.danger:not(.subtle):hover{
+  background:#fff1d6;
+  border-color:#d4a94c;
+  color:#5a411a;
+}
+
+/* Force delete: aggressive red — clearly destructive */
+.button.danger.subtle{
+  background:#fee2e2 !important;
+  border-color:#fca5a5 !important;
+  color:#991b1b !important;
+  font-weight:700 !important;
+}
+.button.danger.subtle:hover{
+  background:#fecaca !important;
+  border-color:#ef4444 !important;
+  color:#7f1d1d !important;
+}
+
+.inventory-detail-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  justify-content:flex-start;
 }
