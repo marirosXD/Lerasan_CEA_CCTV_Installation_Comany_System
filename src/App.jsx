@@ -62,7 +62,6 @@ const formatQty = (qty, unit) => {
 };
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-// Payment status helpers — derive from amount_paid vs grand total
 const quoteGrandTotal = (quote) => {
   const itemsTotal = (quote.quotation_items || []).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const labor = Number(quote.labor_cost || 0);
@@ -524,6 +523,14 @@ function App() {
     const { error } = await supabase.from('employees').delete().eq('id', employee.id);
     if (error) setMessage(error.message); else { setModal(null); await loadWorkspace(); }
   }
+  async function deleteQuotation(quote) {
+    if (!window.confirm(`Delete the quotation for "${quote.client_name}" — ${quote.project_title || quote.service_type}?\n\nThis cannot be undone.`)) return;
+    const { error } = await supabase.from('quotations').delete().eq('id', quote.id);
+    if (error) { setMessage(error.message); return; }
+    setMessage(`Quotation for ${quote.client_name} deleted.`);
+    setPreviewQuote(null);
+    await loadWorkspace();
+  }
   async function createQuotation(event) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -713,7 +720,15 @@ function App() {
           onAdd={() => setModal({ type: 'employee' })}
           onOpen={(employee) => setModal({ type: 'employee-details', employee })}
         />}
-        {tab === 'quotations' && <QuotationsView quotations={filteredQuotations} search={quotationSearch} setSearch={setQuotationSearch} onAdd={() => { resetQuoteRows(); setModal({ type: 'quotation' }); }} onView={(q) => setPreviewQuote(q)} onPrint={(q) => setPrintingQuote(q)} />}
+        {tab === 'quotations' && <QuotationsView
+          quotations={filteredQuotations}
+          search={quotationSearch}
+          setSearch={setQuotationSearch}
+          onAdd={() => { resetQuoteRows(); setModal({ type: 'quotation' }); }}
+          onView={(q) => setPreviewQuote(q)}
+          onPrint={(q) => setPrintingQuote(q)}
+          onDelete={deleteQuotation}
+        />}
         {tab === 'settings' && <SettingsView
           profile={profile}
           email={session.user.email}
@@ -1008,6 +1023,7 @@ function App() {
           setTimeout(() => setPrintingQuote(q), 60);
         }}
         onRecordPayment={(q) => { setPreviewQuote(null); setModal({ type: 'record-payment', quote: q }); }}
+        onDelete={deleteQuotation}
       />}
     </div>
     {printingQuote && <PrintableQuotation quote={printingQuote} />}
@@ -1270,10 +1286,10 @@ function EmployeesView({ employees, search, setSearch, onAdd, onOpen }) {
   </section>;
 }
 
-function QuotationsView({ quotations, search, setSearch, onAdd, onView, onPrint }) {
+function QuotationsView({ quotations, search, setSearch, onAdd, onView, onPrint, onDelete }) {
   return <section className="panel">
     <div className="panel-heading">
-      <div><h3>Client quotations</h3><p>Draft itemized service estimates and print for clients</p></div>
+      <div><h3>Client quotations</h3><p>Itemized service estimates and print for clients</p></div>
       <button className="button primary small-button" onClick={onAdd}><Plus size={15} /> New quotation</button>
     </div>
     <ListSearch value={search} onChange={setSearch} placeholder="Search client, project, or status…" />
@@ -1282,21 +1298,24 @@ function QuotationsView({ quotations, search, setSearch, onAdd, onView, onPrint 
         <div className="quote-top">
           <span className="order-icon"><FileText size={18} /></span>
           <div className="quote-top-chips">
-          <PaymentStatus quote={quote} />
-        </div>
+            <PaymentStatus quote={quote} />
+          </div>
         </div>
         <div className="quote-card-body">
           <h4>{quote.client_name}</h4>
           <p className="quote-project">{quote.project_title || quote.service_type}</p>
           <small className="quote-location">{quote.client_address || 'No location set'}</small>
           <div className="quote-totals">
-            <strong>{money(quote.subtotal + Number(quote.labor_cost || 0))}</strong>
+            <strong>{money(quoteGrandTotal(quote))}</strong>
             <small>Paid {money(quote.amount_paid || 0)} · Balance {money(quoteBalance(quote))}</small>
           </div>
         </div>
         <div className="quote-actions">
           <button className="button secondary small-button" onClick={() => onView(quote)}><Eye size={15} /> View</button>
-          <button className="button primary small-button" onClick={() => onPrint(quote)}><Printer size={15} /> Print</button>
+          <button className="button secondary small-button" onClick={() => onPrint(quote)}><Printer size={15} /> Print</button>
+          <button className="button danger subtle small-button" onClick={() => onDelete(quote)} title="Delete this quotation">
+            <Trash2 size={15} /> Delete
+          </button>
         </div>
       </article>)}
       {!quotations.length && <div className="empty-state">No matching quotations.</div>}
@@ -1304,18 +1323,24 @@ function QuotationsView({ quotations, search, setSearch, onAdd, onView, onPrint 
   </section>;
 }
 
-function QuotePreviewModal({ quote, onClose, onPrint, onRecordPayment }) {
+function QuotePreviewModal({ quote, onClose, onPrint, onRecordPayment, onDelete }) {
   const total = quoteGrandTotal(quote);
   const paid = Number(quote.amount_paid || 0);
   const balance = quoteBalance(quote);
-  const status = quotePaymentStatus(quote);
 
   return <div className="modal-scrim"><section className="modal-card quote-preview-card">
     <header className="modal-header">
       <h2>Ready to print</h2>
       <div className="modal-header-actions">
-        <button className="button secondary small-button" onClick={() => onRecordPayment(quote)}><Wallet size={15} /> Record payment</button>
-        <button className="button primary small-button" onClick={onPrint}><Printer size={15} /> Print</button>
+        <button className="button danger subtle small-button" onClick={() => onDelete(quote)}>
+          <Trash2 size={15} /> Delete
+        </button>
+        <button className="button secondary small-button" onClick={() => onRecordPayment(quote)}>
+          <Wallet size={15} /> Record payment
+        </button>
+        <button className="button primary small-button" onClick={onPrint}>
+          <Printer size={15} /> Print
+        </button>
         <button className="icon-button" onClick={onClose}><X size={19} /></button>
       </div>
     </header>
