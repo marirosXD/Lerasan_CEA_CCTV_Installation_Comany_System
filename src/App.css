@@ -614,3 +614,19 @@ td .button.small-button{white-space:nowrap}
   border-color:#ef4444 !important;
   color:#7f1d1d !important;
 }
+
+/* Login card — wider so the subtitle fits on one line */
+.login-card{width:min(520px,calc(100% - 24px))}
+
+/* Brand block inside the login card — allow subtitle to fit */
+.login-card>.brand{flex-direction:column;text-align:center;gap:14px}
+.login-card>.brand>div:last-child{display:flex;flex-direction:column;align-items:center}
+.login-card>.brand span{
+  max-width:none;
+  white-space:nowrap;
+  font-size:12.5px;
+  margin-top:6px;
+}
+@media(max-width:480px){
+  .login-card>.brand span{white-space:normal;max-width:280px}
+}
