@@ -1282,9 +1282,8 @@ function QuotationsView({ quotations, search, setSearch, onAdd, onView, onPrint 
         <div className="quote-top">
           <span className="order-icon"><FileText size={18} /></span>
           <div className="quote-top-chips">
-            <Status status={quote.status} />
-            <PaymentStatus quote={quote} />
-          </div>
+          <PaymentStatus quote={quote} />
+        </div>
         </div>
         <div className="quote-card-body">
           <h4>{quote.client_name}</h4>
