@@ -344,12 +344,19 @@ function App() {
         unit: String(row.unit || 'pcs').trim() || 'pcs',
       }));
 
+    const scheduledAt = data.get('scheduled_at') || null;
+
+    if (scheduledAt && scheduledAt < todayISO()) {
+      setMessage('Scheduled date cannot be in the past. Please choose today or a later date.');
+      return;
+    }
+
     const values = {
       client_name: data.get('client_name'),
       location: data.get('location'),
       service_type: data.get('service_type'),
       status: 'Pending',
-      scheduled_at: data.get('scheduled_at') || null,
+      scheduled_at: scheduledAt,
       scheduled_time: data.get('scheduled_time') || null,
       notes: data.get('notes') || null,
     };
@@ -383,11 +390,18 @@ function App() {
         unit: String(row.unit || 'pcs').trim() || 'pcs',
       }));
 
+    const scheduledAt = data.get('scheduled_at') || null;
+
+    if (scheduledAt && scheduledAt < todayISO()) {
+      setMessage('Scheduled date cannot be in the past. Please choose today or a later date.');
+      return;
+    }
+
     const values = {
       client_name: data.get('client_name'),
       location: data.get('location'),
       service_type: data.get('service_type'),
-      scheduled_at: data.get('scheduled_at') || null,
+      scheduled_at: scheduledAt,
       scheduled_time: data.get('scheduled_time') || null,
       notes: data.get('notes') || null,
     };
@@ -766,9 +780,45 @@ function App() {
 
         {modal.type === 'stock-history' && <StockHistoryView item={modal.item} transactions={transactions.filter((t) => t.inventory_item_id === modal.item.id)} />}
 
-        {modal.type === 'workorder' && <form className="form-grid" onSubmit={createWorkOrder}><Field name="client_name" label="Client name" required /><Field name="service_type" label="Service" required placeholder="CCTV Installation" /><Field name="location" label="Location" required placeholder="Davao City" /><Field name="scheduled_at" label="Scheduled date" type="date" /><Field name="scheduled_time" label="Scheduled time" type="time" /><TechnicianChecklist employees={employees} /><HardwareBuilder rows={hardwareRows} onAdd={addHardwareRow} onUpdate={updateHardwareRow} onRemove={removeHardwareRow} /><label className="field full"><span>Work notes</span><textarea name="notes" rows="2" /></label><FormActions onCancel={() => { resetHardwareRows(); setModal(null); }} /></form>}
+        {modal.type === 'workorder' && <form className="form-grid" onSubmit={createWorkOrder}>
+          <Field name="client_name" label="Client name" required />
+          <Field name="service_type" label="Service" required placeholder="CCTV Installation" />
+          <Field name="location" label="Location" required placeholder="Davao City" />
+          <label className="field">
+            <span>Scheduled date</span>
+            <input name="scheduled_at" type="date" min={todayISO()} />
+            <small>Must be today or a later date — the CEO cannot schedule work in the past.</small>
+          </label>
+          <label className="field">
+            <span>Scheduled time</span>
+            <input name="scheduled_time" type="time" />
+            <small>Optional — leave blank if the time isn't confirmed yet.</small>
+          </label>
+          <TechnicianChecklist employees={employees} />
+          <HardwareBuilder rows={hardwareRows} onAdd={addHardwareRow} onUpdate={updateHardwareRow} onRemove={removeHardwareRow} />
+          <label className="field full"><span>Work notes</span><textarea name="notes" rows="2" /></label>
+          <FormActions onCancel={() => { resetHardwareRows(); setModal(null); }} />
+        </form>}
 
-        {modal.type === 'edit-workorder' && <form className="form-grid" onSubmit={(event) => editWorkOrder(event, modal.order)}><Field name="client_name" label="Client name" required defaultValue={modal.order.client_name} /><Field name="service_type" label="Service" required defaultValue={modal.order.service_type} /><Field name="location" label="Location" required defaultValue={modal.order.location} /><Field name="scheduled_at" label="Scheduled date" type="date" defaultValue={modal.order.scheduled_at || ''} /><Field name="scheduled_time" label="Scheduled time" type="time" defaultValue={modal.order.scheduled_time || ''} /><TechnicianChecklist employees={employees} selectedIds={modal.order.work_order_assignments?.map((assignment) => assignment.employee_id) || []} /><HardwareBuilder rows={hardwareRows} onAdd={addHardwareRow} onUpdate={updateHardwareRow} onRemove={removeHardwareRow} /><label className="field full"><span>Work notes</span><textarea name="notes" rows="2" defaultValue={modal.order.notes || ''} /></label><FormActions onCancel={() => { resetHardwareRows(); setModal(null); }} /></form>}
+        {modal.type === 'edit-workorder' && <form className="form-grid" onSubmit={(event) => editWorkOrder(event, modal.order)}>
+          <Field name="client_name" label="Client name" required defaultValue={modal.order.client_name} />
+          <Field name="service_type" label="Service" required defaultValue={modal.order.service_type} />
+          <Field name="location" label="Location" required defaultValue={modal.order.location} />
+          <label className="field">
+            <span>Scheduled date</span>
+            <input name="scheduled_at" type="date" defaultValue={modal.order.scheduled_at || ''} min={todayISO()} />
+            <small>Must be today or a later date.</small>
+          </label>
+          <label className="field">
+            <span>Scheduled time</span>
+            <input name="scheduled_time" type="time" defaultValue={modal.order.scheduled_time || ''} />
+            <small>Optional — leave blank if the time isn't confirmed yet.</small>
+          </label>
+          <TechnicianChecklist employees={employees} selectedIds={modal.order.work_order_assignments?.map((assignment) => assignment.employee_id) || []} />
+          <HardwareBuilder rows={hardwareRows} onAdd={addHardwareRow} onUpdate={updateHardwareRow} onRemove={removeHardwareRow} />
+          <label className="field full"><span>Work notes</span><textarea name="notes" rows="2" defaultValue={modal.order.notes || ''} /></label>
+          <FormActions onCancel={() => { resetHardwareRows(); setModal(null); }} />
+        </form>}
 
         {modal.type === 'employee' && <form className="form-grid" onSubmit={createEmployee}>
           <Field name="full_name" label="Full name" required />
