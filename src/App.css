@@ -969,3 +969,59 @@ td .button.small-button{white-space:nowrap}
 .printable-quotation .print-payment-status b{color:#18212e}
 .printable-quotation .print-total-row.highlight .print-total-label{color:#18212e}
 .printable-quotation .print-total-row.highlight td{background:#f4f7fb;font-weight:700}
+
+/* ============================================================ */
+/* QUOTATION FILTER CHIPS + ARCHIVED VIEW                       */
+/* ============================================================ */
+
+/* Active / Archived chips at top of Quotations page */
+.panel > .inventory-filters{
+  padding:16px 20px 0;
+}
+
+/* Quotation card actions — wrap so 3 buttons fit */
+.quote-actions{
+  display:flex;
+  justify-content:flex-end;
+  gap:6px;
+  width:100%;
+  flex-wrap:wrap;
+}
+.quote-actions .button.small-button{
+  min-height:32px;
+  padding:0 10px;
+  font-size:12px;
+}
+
+/* Archive button — amber, matches inventory archived theme */
+.quote-actions .button.danger:not(.subtle){
+  background:#fff7e6;
+  border-color:#f1dda9;
+  color:#78591b;
+  font-weight:700;
+}
+.quote-actions .button.danger:not(.subtle):hover{
+  background:#fff1d6;
+  border-color:#d4a94c;
+  color:#5a411a;
+}
+
+/* Force delete button inside archived view — red */
+.quote-actions .button.danger.subtle,
+.row-actions .button.danger.subtle{
+  background:#fee2e2;
+  border-color:#fca5a5;
+  color:#991b1b;
+  font-weight:700;
+}
+.quote-actions .button.danger.subtle:hover,
+.row-actions .button.danger.subtle:hover{
+  background:#fecaca;
+  border-color:#ef4444;
+  color:#7f1d1d;
+}
+
+@media(max-width:680px){
+  .quote-actions{justify-content:stretch}
+  .quote-actions .button{flex:1}
+}

@@ -110,6 +110,7 @@ function App() {
   const [inventoryFilter, setInventoryFilter] = useState('all');
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [quotationSearch, setQuotationSearch] = useState('');
+  const [quotationFilter, setQuotationFilter] = useState('active');
   const [hardwareRows, setHardwareRows] = useState([{ item_name: '', quantity: 1, unit: 'pcs' }]);
   const [customSupplier, setCustomSupplier] = useState(false);
   const [quoteRows, setQuoteRows] = useState([{ description: '', quantity: 1, unit: 'pcs', unit_cost: 0 }]);
@@ -523,14 +524,34 @@ function App() {
     const { error } = await supabase.from('employees').delete().eq('id', employee.id);
     if (error) setMessage(error.message); else { setModal(null); await loadWorkspace(); }
   }
-  async function deleteQuotation(quote) {
-    if (!window.confirm(`Delete the quotation for "${quote.client_name}" — ${quote.project_title || quote.service_type}?\n\nThis cannot be undone.`)) return;
+
+  async function archiveQuotation(quote) {
+    if (!window.confirm(`Archive the quotation for "${quote.client_name}" — ${quote.project_title || quote.service_type}?\n\nIt will be moved to the Archived tab. You can restore it any time.`)) return;
+    const { error } = await supabase.rpc('archive_quotation', { quote_id: quote.id });
+    if (error) { setMessage(error.message); return; }
+    setMessage(`"${quote.client_name}" quotation archived.`);
+    setPreviewQuote(null);
+    setQuotationFilter('archived');
+    await loadWorkspace();
+  }
+  async function restoreQuotation(quote) {
+    if (!window.confirm(`Restore the quotation for "${quote.client_name}"?`)) return;
+    const { error } = await supabase.rpc('restore_quotation', { quote_id: quote.id });
+    if (error) { setMessage(error.message); return; }
+    setMessage(`"${quote.client_name}" quotation restored.`);
+    setQuotationFilter('active');
+    await loadWorkspace();
+  }
+  async function forceDeleteQuotation(quote) {
+    if (!window.confirm(`Permanently delete the quotation for "${quote.client_name}"?\n\nThis cannot be undone.`)) return;
+    if (!window.confirm(`Are you absolutely sure? This is your last chance.`)) return;
     const { error } = await supabase.from('quotations').delete().eq('id', quote.id);
     if (error) { setMessage(error.message); return; }
-    setMessage(`Quotation for ${quote.client_name} deleted.`);
+    setMessage(`Quotation for ${quote.client_name} permanently deleted.`);
     setPreviewQuote(null);
     await loadWorkspace();
   }
+
   async function createQuotation(event) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -638,7 +659,13 @@ function App() {
     return matches && (inventoryFilter === 'all' || (inventoryFilter === 'low' && low));
   }), [activeInventory, inventorySearch, inventoryFilter]);
   const filteredEmployees = useMemo(() => employees.filter((employee) => `${employee.full_name} ${employee.job_title} ${employee.email || ''} ${employee.phone || ''}`.toLowerCase().includes(employeeSearch.toLowerCase())), [employees, employeeSearch]);
-  const filteredQuotations = useMemo(() => quotations.filter((quote) => `${quote.client_name} ${quote.service_type} ${quote.status} ${quote.project_title || ''}`.toLowerCase().includes(quotationSearch.toLowerCase())), [quotations, quotationSearch]);
+
+  const activeQuotations = useMemo(() => quotations.filter((q) => !q.archived), [quotations]);
+  const archivedQuotations = useMemo(() => quotations.filter((q) => q.archived), [quotations]);
+  const filteredQuotations = useMemo(() => {
+    const pool = quotationFilter === 'archived' ? archivedQuotations : activeQuotations;
+    return pool.filter((quote) => `${quote.client_name} ${quote.service_type} ${quote.status} ${quote.project_title || ''}`.toLowerCase().includes(quotationSearch.toLowerCase()));
+  }, [quotations, quotationSearch, quotationFilter, activeQuotations, archivedQuotations]);
 
   if (supabaseConfigError) return <ConfigErrorScreen />;
   if (!session) return <LoginScreen
@@ -722,12 +749,18 @@ function App() {
         />}
         {tab === 'quotations' && <QuotationsView
           quotations={filteredQuotations}
+          activeCount={activeQuotations.length}
+          archivedCount={archivedQuotations.length}
           search={quotationSearch}
           setSearch={setQuotationSearch}
+          filter={quotationFilter}
+          setFilter={setQuotationFilter}
           onAdd={() => { resetQuoteRows(); setModal({ type: 'quotation' }); }}
           onView={(q) => setPreviewQuote(q)}
           onPrint={(q) => setPrintingQuote(q)}
-          onDelete={deleteQuotation}
+          onArchive={archiveQuotation}
+          onRestore={restoreQuotation}
+          onForceDelete={forceDeleteQuotation}
         />}
         {tab === 'settings' && <SettingsView
           profile={profile}
@@ -1023,7 +1056,8 @@ function App() {
           setTimeout(() => setPrintingQuote(q), 60);
         }}
         onRecordPayment={(q) => { setPreviewQuote(null); setModal({ type: 'record-payment', quote: q }); }}
-        onDelete={deleteQuotation}
+        onArchive={archiveQuotation}
+        onForceDelete={forceDeleteQuotation}
       />}
     </div>
     {printingQuote && <PrintableQuotation quote={printingQuote} />}
@@ -1286,44 +1320,124 @@ function EmployeesView({ employees, search, setSearch, onAdd, onOpen }) {
   </section>;
 }
 
-function QuotationsView({ quotations, search, setSearch, onAdd, onView, onPrint, onDelete }) {
+function QuotationsView({ quotations, activeCount, archivedCount, search, setSearch, filter, setFilter, onAdd, onView, onPrint, onArchive, onRestore, onForceDelete }) {
+  const isArchived = filter === 'archived';
   return <section className="panel">
     <div className="panel-heading">
       <div><h3>Client quotations</h3><p>Itemized service estimates and print for clients</p></div>
       <button className="button primary small-button" onClick={onAdd}><Plus size={15} /> New quotation</button>
     </div>
-    <ListSearch value={search} onChange={setSearch} placeholder="Search client, project, or status…" />
-    <div className="quote-grid">
-      {quotations.map((quote) => <article className="quote-card" key={quote.id}>
-        <div className="quote-top">
-          <span className="order-icon"><FileText size={18} /></span>
-          <div className="quote-top-chips">
-            <PaymentStatus quote={quote} />
-          </div>
-        </div>
-        <div className="quote-card-body">
-          <h4>{quote.client_name}</h4>
-          <p className="quote-project">{quote.project_title || quote.service_type}</p>
-          <small className="quote-location">{quote.client_address || 'No location set'}</small>
-          <div className="quote-totals">
-            <strong>{money(quoteGrandTotal(quote))}</strong>
-            <small>Paid {money(quote.amount_paid || 0)} · Balance {money(quoteBalance(quote))}</small>
-          </div>
-        </div>
-        <div className="quote-actions">
-          <button className="button secondary small-button" onClick={() => onView(quote)}><Eye size={15} /> View</button>
-          <button className="button secondary small-button" onClick={() => onPrint(quote)}><Printer size={15} /> Print</button>
-          <button className="button danger subtle small-button" onClick={() => onDelete(quote)} title="Delete this quotation">
-            <Trash2 size={15} /> Delete
-          </button>
-        </div>
-      </article>)}
-      {!quotations.length && <div className="empty-state">No matching quotations.</div>}
+    <div className="inventory-filters">
+      <button className={!isArchived ? 'chip active' : 'chip'} onClick={() => setFilter('active')}>
+        Active {activeCount > 0 && <span className="chip-count">{activeCount}</span>}
+      </button>
+      <button className={isArchived ? 'chip active archived-chip' : 'chip archived-chip'} onClick={() => setFilter('archived')}>
+        <Archive size={13} /> Archived {archivedCount > 0 && <span className="chip-count archived-count">{archivedCount}</span>}
+      </button>
     </div>
+
+    {isArchived ? (
+      <ArchivedQuotationsList
+        archived={quotations}
+        onRestore={onRestore}
+        onForceDelete={onForceDelete}
+        onOpen={onView}
+      />
+    ) : (
+      <>
+        <ListSearch value={search} onChange={setSearch} placeholder="Search client, project, or status…" />
+        <div className="quote-grid">
+          {quotations.map((quote) => <article className="quote-card" key={quote.id}>
+            <div className="quote-top">
+              <span className="order-icon"><FileText size={18} /></span>
+              <div className="quote-top-chips">
+                <PaymentStatus quote={quote} />
+              </div>
+            </div>
+            <div className="quote-card-body">
+              <h4>{quote.client_name}</h4>
+              <p className="quote-project">{quote.project_title || quote.service_type}</p>
+              <small className="quote-location">{quote.client_address || 'No location set'}</small>
+              <div className="quote-totals">
+                <strong>{money(quoteGrandTotal(quote))}</strong>
+                <small>Paid {money(quote.amount_paid || 0)} · Balance {money(quoteBalance(quote))}</small>
+              </div>
+            </div>
+            <div className="quote-actions">
+              <button className="button secondary small-button" onClick={() => onView(quote)}><Eye size={15} /> View</button>
+              <button className="button secondary small-button" onClick={() => onPrint(quote)}><Printer size={15} /> Print</button>
+              <button className="button danger small-button" onClick={() => onArchive(quote)} title="Archive this quotation">
+                <Archive size={15} /> Archive
+              </button>
+            </div>
+          </article>)}
+          {!quotations.length && <div className="empty-state">No matching quotations.</div>}
+        </div>
+      </>
+    )}
   </section>;
 }
 
-function QuotePreviewModal({ quote, onClose, onPrint, onRecordPayment, onDelete }) {
+function ArchivedQuotationsList({ archived, onRestore, onForceDelete, onOpen }) {
+  if (!archived.length) {
+    return <>
+      <div className="archived-banner">
+        <Archive size={15} />
+        <span>Archived quotations are hidden from the active list but their records are preserved. Restore any quotation to bring it back.</span>
+      </div>
+      <div className="empty-state archived-empty">
+        <Archive size={40} strokeWidth={1.5} />
+        <p><b>No archived quotations yet.</b></p>
+        <small>Quotations you archive from the active list will appear here.</small>
+      </div>
+    </>;
+  }
+
+  return <>
+    <div className="archived-banner">
+      <Archive size={15} />
+      <span>{archived.length} archived quotation{archived.length === 1 ? '' : 's'}. Restore any quotation to bring it back to the active list.</span>
+    </div>
+    <div className="table-scroll"><table>
+      <thead>
+        <tr>
+          <th>Client</th>
+          <th>Project</th>
+          <th>Total</th>
+          <th>Payment</th>
+          <th>Archived</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {archived.map((quote) => <tr key={quote.id} className="clickable-row" onClick={() => onOpen?.(quote)}>
+          <td>
+            <button className="table-link" onClick={(event) => { event.stopPropagation(); onOpen?.(quote); }}>
+              <b>{quote.client_name}</b>
+              <small>{quote.client_address || 'No location set'}</small>
+            </button>
+          </td>
+          <td>{quote.project_title || quote.service_type}</td>
+          <td><span className="qty-value">{money(quoteGrandTotal(quote))}</span></td>
+          <td><PaymentStatus quote={quote} /></td>
+          <td><small className="archived-date">{quote.archived_at ? formatDateTime(quote.archived_at) : 'Unknown'}</small></td>
+          <td>
+            <div className="row-actions">
+              <button className="button danger subtle small-button" onClick={(event) => { event.stopPropagation(); onForceDelete(quote); }} title="Permanently delete">
+                <Trash2 size={14} /> Delete
+              </button>
+              <button className="button primary small-button" onClick={(event) => { event.stopPropagation(); onRestore(quote); }}>
+                <RotateCcw size={14} /> Restore
+              </button>
+            </div>
+          </td>
+        </tr>)}
+      </tbody>
+    </table></div>
+  </>;
+}
+
+function QuotePreviewModal({ quote, onClose, onPrint, onRecordPayment, onArchive, onForceDelete }) {
   const total = quoteGrandTotal(quote);
   const paid = Number(quote.amount_paid || 0);
   const balance = quoteBalance(quote);
@@ -1332,9 +1446,15 @@ function QuotePreviewModal({ quote, onClose, onPrint, onRecordPayment, onDelete 
     <header className="modal-header">
       <h2>Ready to print</h2>
       <div className="modal-header-actions">
-        <button className="button danger subtle small-button" onClick={() => onDelete(quote)}>
-          <Trash2 size={15} /> Delete
-        </button>
+        {quote.archived ? (
+          <button className="button danger subtle small-button" onClick={() => onForceDelete(quote)}>
+            <Trash2 size={15} /> Permanently delete
+          </button>
+        ) : (
+          <button className="button danger small-button" onClick={() => onArchive(quote)}>
+            <Archive size={15} /> Archive
+          </button>
+        )}
         <button className="button secondary small-button" onClick={() => onRecordPayment(quote)}>
           <Wallet size={15} /> Record payment
         </button>
