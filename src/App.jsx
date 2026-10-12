@@ -4,7 +4,7 @@ import {
   Activity, AlertTriangle, Archive, ArrowDownToLine, ArrowRight, BadgeCheck, BriefcaseBusiness, CalendarDays,
   Check, ChevronDown, ClipboardList, Eye, EyeOff, FileText, HardHat, KeyRound, LayoutDashboard,
   LockKeyhole, LogOut, Mail, MailPlus, MapPin, Minus, Package, Plus, Printer, RotateCcw, Search,
-  Settings, ShieldCheck, Trash2, Users, Wrench, X,
+  Settings, ShieldCheck, Trash2, Users, Wallet, Wrench, X,
 } from 'lucide-react';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -61,6 +61,22 @@ const formatQty = (qty, unit) => {
   return `${safeQty} ${safeUnit}`;
 };
 const todayISO = () => new Date().toISOString().slice(0, 10);
+
+// Payment status helpers — derive from amount_paid vs grand total
+const quoteGrandTotal = (quote) => {
+  const itemsTotal = (quote.quotation_items || []).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const labor = Number(quote.labor_cost || 0);
+  return itemsTotal + labor;
+};
+const quotePaymentStatus = (quote) => {
+  const total = quoteGrandTotal(quote);
+  const paid = Number(quote.amount_paid || 0);
+  if (paid <= 0) return 'Unpaid';
+  if (paid >= total * 0.999) return 'Paid';
+  return 'Partially Paid';
+};
+const quoteBalance = (quote) => Math.max(0, quoteGrandTotal(quote) - Number(quote.amount_paid || 0));
+
 async function addAvatarUrl(record) {
   if (!record?.avatar_path) return record;
   const { data } = await supabase.storage.from('profile-photos').createSignedUrl(record.avatar_path, 3600);
@@ -573,6 +589,31 @@ function App() {
     setPreviewQuote(savedQuote);
   }
 
+  async function recordPayment(event, quote) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const amount = Number(data.get('amount') || 0);
+    if (amount <= 0) { setMessage('Enter a payment amount greater than zero.'); return; }
+
+    const existingPaid = Number(quote.amount_paid || 0);
+    const newTotalPaid = existingPaid + amount;
+
+    const updates = {
+      amount_paid: newTotalPaid,
+      payment_date: data.get('payment_date') || todayISO(),
+      payment_method: data.get('payment_method') || 'Cash',
+      payment_notes: data.get('payment_notes') || null,
+    };
+
+    const { error } = await supabase.from('quotations').update(updates).eq('id', quote.id);
+    if (error) { setMessage(error.message); return; }
+
+    setModal(null);
+    setPreviewQuote(null);
+    await loadWorkspace();
+    setMessage(`Payment of ${money(amount)} recorded. Total paid: ${money(newTotalPaid)}.`);
+  }
+
   const sessionUserId = session?.user?.id;
   const visibleOrders = useMemo(() => (role === 'field_technician'
     ? orders.filter((order) => order.work_order_assignments?.some((assignment) => assignment.employees?.auth_user_id === sessionUserId))
@@ -683,7 +724,7 @@ function App() {
           onChangePassword={changeOwnPassword}
         />}
       </main>
-      {modal && <Modal title={modal.type === 'inventory' ? 'Add inventory item' : modal.type === 'edit-inventory' ? 'Edit inventory item' : modal.type === 'inventory-details' ? 'Inventory item details' : modal.type === 'archived-details' ? 'Archived item' : modal.type === 'receive' ? 'Receive stock' : modal.type === 'adjust-stock' ? 'Adjust stock' : modal.type === 'stock-history' ? 'Stock history' : modal.type === 'workorder' ? 'Create work order' : modal.type === 'edit-workorder' ? 'Edit work order' : modal.type === 'employee' ? 'Add employee' : modal.type === 'edit-employee' ? 'Employee settings' : modal.type === 'employee-details' ? 'Employee details' : modal.type === 'quotation' ? 'Create quotation' : 'Quotation details'} onClose={() => { resetHardwareRows(); resetQuoteRows(); setCustomSupplier(false); setModal(null); }}>
+      {modal && <Modal title={modal.type === 'inventory' ? 'Add inventory item' : modal.type === 'edit-inventory' ? 'Edit inventory item' : modal.type === 'inventory-details' ? 'Inventory item details' : modal.type === 'archived-details' ? 'Archived item' : modal.type === 'receive' ? 'Receive stock' : modal.type === 'adjust-stock' ? 'Adjust stock' : modal.type === 'stock-history' ? 'Stock history' : modal.type === 'workorder' ? 'Create work order' : modal.type === 'edit-workorder' ? 'Edit work order' : modal.type === 'employee' ? 'Add employee' : modal.type === 'edit-employee' ? 'Employee settings' : modal.type === 'employee-details' ? 'Employee details' : modal.type === 'quotation' ? 'Create quotation' : modal.type === 'record-payment' ? 'Record payment' : 'Quotation details'} onClose={() => { resetHardwareRows(); resetQuoteRows(); setCustomSupplier(false); setModal(null); }}>
 
         {modal.type === 'inventory' && <form className="form-grid" onSubmit={addInventory}>
           <Field name="item_name" label="What is it?" required placeholder="8MP Bullet Camera" />
@@ -920,16 +961,53 @@ function App() {
           <label className="field full"><span>Notes (optional)</span><textarea name="notes" rows="2" /></label>
           <FormActions onCancel={() => { resetQuoteRows(); setModal(null); }} />
         </form>}
+
+        {modal.type === 'record-payment' && <form className="form-grid" onSubmit={(event) => recordPayment(event, modal.quote)}>
+          <div className="field full">
+            <span>Quotation</span>
+            <div className="receive-item-card">
+              <b>{modal.quote.client_name} — {modal.quote.project_title || modal.quote.service_type}</b>
+              <small>Total: {money(quoteGrandTotal(modal.quote))} · Currently paid: {money(modal.quote.amount_paid || 0)} · Balance: {money(quoteBalance(modal.quote))}</small>
+            </div>
+          </div>
+
+          <label className="field">
+            <span>Amount received (₱)</span>
+            <input name="amount" type="number" min="0.01" step="0.01" required autoFocus placeholder={String(Math.round(quoteBalance(modal.quote)))} defaultValue={Math.round(quoteBalance(modal.quote) * 100) / 100} />
+            <small>Default is the remaining balance. Adjust for partial payments.</small>
+          </label>
+          <label className="field">
+            <span>Payment date</span>
+            <input name="payment_date" type="date" defaultValue={todayISO()} />
+          </label>
+          <label className="field">
+            <span>Method</span>
+            <select name="payment_method" defaultValue="Cash">
+              <option>Cash</option>
+              <option>Bank Transfer</option>
+              <option>GCash</option>
+              <option>Check</option>
+              <option>Other</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Notes (optional)</span>
+            <input name="payment_notes" placeholder="e.g. 50% down payment received" />
+          </label>
+
+          <FormActions onCancel={() => setModal(null)} />
+        </form>}
       </Modal>}
       {selectedOrder && <WorkOrderDetails order={orders.find((item) => item.id === selectedOrder.id) || selectedOrder} role={role} onClose={() => setSelectedOrder(null)} onStatus={setOrderStatus} onDelete={deleteOrder} onEdit={(order) => { setSelectedOrder(null); resetHardwareRows(order.work_order_materials?.length ? order.work_order_materials.map((m) => ({ item_name: m.item_name, quantity: m.quantity, unit: m.unit || 'pcs' })) : [{ item_name: '', quantity: 1, unit: 'pcs' }]); setModal({ type: 'edit-workorder', order }); }} />}
       {previewQuote && <QuotePreviewModal
-        quote={previewQuote}
+        quote={quotations.find((q) => q.id === previewQuote.id) || previewQuote}
         onClose={() => setPreviewQuote(null)}
         onPrint={() => {
-          const q = previewQuote;
+          const q = quotations.find((item) => item.id === previewQuote.id) || previewQuote;
           setPreviewQuote(null);
           setTimeout(() => setPrintingQuote(q), 60);
         }}
+        onRecordPayment={(q) => { setPreviewQuote(null); setModal({ type: 'record-payment', quote: q }); }}
       />}
     </div>
     {printingQuote && <PrintableQuotation quote={printingQuote} />}
@@ -1164,6 +1242,7 @@ function WorkOrdersView({ role, orders, search = '', setSearch, category = 'All 
 }
 function OrderList({ orders, onOpen }) { return <div className="order-list">{orders.map((order) => <button className="order-row" key={order.id} onClick={() => onOpen(order)}><div className="order-service"><span className="order-icon"><Wrench size={17} /></span><span><b>{order.client_name}</b><small>{order.service_type}</small></span></div><span className="order-location"><MapPin size={14} />{order.location}</span><Status status={order.status} /></button>)}{!orders.length && <div className="empty-state">No work orders yet.</div>}</div>; }
 function Status({ status }) { const key = status === 'In Progress' ? 'progress' : status?.toLowerCase(); return <span className={`status-chip ${key || 'pending'}`}>{status || 'Pending'}</span>; }
+function PaymentStatus({ quote }) { const status = quotePaymentStatus(quote); const key = status === 'Paid' ? 'paid' : status === 'Partially Paid' ? 'partial' : 'unpaid'; return <span className={`status-chip ${key}`}>{status}</span>; }
 function TeamScheduleView({ schedule, myOrderIds }) {
   const mine = new Set(myOrderIds);
   return <section className="panel table-panel"><div className="panel-heading"><div><h3>Team schedule</h3><p>See who is working where and when. Client details are shown only on your own assigned work orders.</p></div></div><div className="table-scroll"><table><thead><tr><th>Date</th><th>Service</th><th>Area</th><th>Technicians</th><th>Status</th></tr></thead><tbody>{schedule.map((job) => <tr key={job.id}><td><b>{job.scheduled_at ? formatDate(job.scheduled_at) : 'Not scheduled'}</b></td><td>{job.service_type}</td><td>{job.location}</td><td>{job.technicians?.length ? job.technicians.join(', ') : 'Unassigned'}</td><td><Status status={job.status} />{mine.has(job.id) && <span className="status-chip neutral" style={{ marginLeft: 6 }}>Yours</span>}</td></tr>)}{!schedule.length && <EmptyRow columns={5} text="No upcoming jobs on the schedule." />}</tbody></table></div></section>;
@@ -1202,15 +1281,18 @@ function QuotationsView({ quotations, search, setSearch, onAdd, onView, onPrint 
       {quotations.map((quote) => <article className="quote-card" key={quote.id}>
         <div className="quote-top">
           <span className="order-icon"><FileText size={18} /></span>
-          <Status status={quote.status} />
+          <div className="quote-top-chips">
+            <Status status={quote.status} />
+            <PaymentStatus quote={quote} />
+          </div>
         </div>
         <div className="quote-card-body">
           <h4>{quote.client_name}</h4>
           <p className="quote-project">{quote.project_title || quote.service_type}</p>
           <small className="quote-location">{quote.client_address || 'No location set'}</small>
           <div className="quote-totals">
-            <strong>{money(quote.subtotal)}</strong>
-            <small>50% down payment · {money(quote.down_payment)}</small>
+            <strong>{money(quote.subtotal + Number(quote.labor_cost || 0))}</strong>
+            <small>Paid {money(quote.amount_paid || 0)} · Balance {money(quoteBalance(quote))}</small>
           </div>
         </div>
         <div className="quote-actions">
@@ -1223,15 +1305,38 @@ function QuotationsView({ quotations, search, setSearch, onAdd, onView, onPrint 
   </section>;
 }
 
-function QuotePreviewModal({ quote, onClose, onPrint }) {
+function QuotePreviewModal({ quote, onClose, onPrint, onRecordPayment }) {
+  const total = quoteGrandTotal(quote);
+  const paid = Number(quote.amount_paid || 0);
+  const balance = quoteBalance(quote);
+  const status = quotePaymentStatus(quote);
+
   return <div className="modal-scrim"><section className="modal-card quote-preview-card">
     <header className="modal-header">
       <h2>Ready to print</h2>
       <div className="modal-header-actions">
+        <button className="button secondary small-button" onClick={() => onRecordPayment(quote)}><Wallet size={15} /> Record payment</button>
         <button className="button primary small-button" onClick={onPrint}><Printer size={15} /> Print</button>
         <button className="icon-button" onClick={onClose}><X size={19} /></button>
       </div>
     </header>
+    <div className="payment-summary-strip">
+      <div className="payment-summary-item">
+        <span>Total</span>
+        <b>{money(total)}</b>
+      </div>
+      <div className="payment-summary-item">
+        <span>Paid</span>
+        <b className="paid-amount">{money(paid)}</b>
+      </div>
+      <div className="payment-summary-item">
+        <span>Balance</span>
+        <b className={balance > 0 ? 'balance-due' : 'balance-clear'}>{money(balance)}</b>
+      </div>
+      <div className="payment-summary-status">
+        <PaymentStatus quote={quote} />
+      </div>
+    </div>
     <div className="quote-preview-scroll">
       <PrintableQuotation quote={quote} inline />
     </div>
@@ -1265,7 +1370,9 @@ function PrintableQuotation({ quote, inline = false }) {
   const labor = Number(quote.labor_cost || 0);
   const itemsTotal = rows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const grandTotal = itemsTotal + labor;
-  const downPayment = grandTotal * 0.5;
+  const paid = Number(quote.amount_paid || 0);
+  const balance = Math.max(0, grandTotal - paid);
+  const paymentStatus = quotePaymentStatus(quote);
   const projectDate = quote.quote_date || quote.created_at;
 
   return <article className={inline ? 'printable-quotation inline' : 'printable-quotation'}>
@@ -1326,10 +1433,24 @@ function PrintableQuotation({ quote, inline = false }) {
         </tr>
         <tr className="print-total-row secondary">
           <td colSpan="5" className="print-total-label">REQUIRED 50% DOWN PAYMENT</td>
-          <td className="col-cost">{money(downPayment)}</td>
+          <td className="col-cost">{money(grandTotal * 0.5)}</td>
+        </tr>
+        <tr className="print-total-row secondary">
+          <td colSpan="5" className="print-total-label">AMOUNT PAID</td>
+          <td className="col-cost">{money(paid)}</td>
+        </tr>
+        <tr className="print-total-row highlight">
+          <td colSpan="5" className="print-total-label">BALANCE DUE</td>
+          <td className="col-cost">{money(balance)}</td>
         </tr>
       </tbody>
     </table>
+
+    <div className="print-payment-status">
+      <b>Payment status:</b> {paymentStatus}
+      {quote.payment_date ? ` · Last payment received on ${formatDate(quote.payment_date)}` : ''}
+      {quote.payment_method ? ` via ${quote.payment_method}` : ''}
+    </div>
 
     {quote.notes && <p className="print-notes">{quote.notes}</p>}
 
